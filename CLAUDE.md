@@ -19,6 +19,7 @@ tasks/   workstreams W0–W8: goal, PS rules, research, done-when. Owners append
 
 - **Keep this repo and every HF repo private.** They hold Sarvam API outputs (Bulbul audio, transcripts, translations), which must never be published (PS §10 R3).
 - Bulbul's default sample rate is 22,050 Hz. Always pass `speech_sample_rate=24000`.
+- Always pass `model="bulbul:v3"`. Sarvam's docs push `bulbul:v4-flash`, where `shubh` is not a valid speaker (§3B needs v3 `shubh`).
 - Record IDs and `source_file` names are frozen at the mid-term. Never renumber or rename (G3).
 - Augmented audio is never a dataset record; augment only at training time.
 - Hindi transcripts contain no Latin letters and no digits: English words go in Devanagari, numbers as words.
