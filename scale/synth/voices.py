@@ -7,8 +7,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parents[1]
-# ponytail: w8c isn't merged yet, so fall back to its worktree; drop the fallback once main has w8c/
-sys.path[:0] = [str(ROOT / "w8c"), "/home/harsh1/github-repos/sarvam-high-prep/.worktrees/w8c/w8c"]
+sys.path.insert(0, str(ROOT / "w8c"))
 from split import is_heldout  # noqa: E402
 
 MODEL = "k2-fsa/OmniVoice"
