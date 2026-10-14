@@ -109,3 +109,93 @@ One JSON object per line, sorted by `pid`. The first block is **exactly W3's pro
 | `_gen` | prompt version, the exact user prompt, every try's archive key and failures, USD, raw output |
 
 For W6: translate `hi_text`; entity values and `corrections[].value` are the references for the entity check, and a `retracted` span must not appear in the English as fact (FAQ). For W3: `source.corpus = "w2-scripts-v1"` (SPEC §5).
+
+## Generator bake-off (2026-10-14, W2)
+
+**Candidates.** Open-weight models served on Bedrock in ap-south-1 (`aws bedrock list-foundation-models`, 2026-10-14) whose licence puts no terms on outputs; licence read from each Hugging Face card on 2026-10-14:
+
+| Model (Bedrock id) | Licence | USD / 1K tokens in, out (Pricing API, ap-south-1 on-demand) |
+|---|---|---|
+| Qwen3 235B A22B 2507 (`qwen.qwen3-235b-a22b-2507-v1:0`) | Apache-2.0 | 0.00026, 0.00104 |
+| gpt-oss-120b (`openai.gpt-oss-120b-1:0`) | Apache-2.0 | 0.00018, 0.00071 |
+| Mistral Large 3 675B (`mistral.mistral-large-3-675b-instruct`) | Apache-2.0 | 0.00059, 0.00176 |
+| DeepSeek-V3.2 (`deepseek.v3.2`) | MIT | 0.00074, 0.00222 |
+
+Not run:
+- Gemma 3 and Llama 3.x: BASE output terms (prior-art Trap T1).
+- Closed models on Bedrock (Claude, GPT-5.x/6): §10 R2 allows a declared closed API, but their terms restrict using outputs to train competing models. Whether that covers our use is AMBIGUOUS, and open weights are as good here.
+- Kimi K2.5 and MiniMax M2.5: modified MIT; fine, just not needed.
+- Sarvam's LLM: HTTP 402.
+
+**Method.** The same 30 cells (`design(30, "bake-v1")`), the same prompt (v1: rules + 2 hand-written few-shot examples), temperature 0.8, top-p 0.95, first take only. Every call went through `archive_call` (service `bedrock`, stream `w2`).
+
+A take passes only if all of these hold:
+- `spec_text`: `probe.parse` → `validate.check_record` (SPEC §2) passes.
+- `entity_missing`: every given entity is present verbatim, as a `[..]` span.
+- `entity_type`: every type is known.
+- `correction`: the self-correction is realised in order: wrong value, then marker, then right value.
+- `gender`: no first-person verb of the other gender.
+- `filler`: none of the banned fillers अ अं ए.
+- `length`: the estimate is 9–57 s.
+- `intent`: a detectable intent phenomenon is present.
+
+### Constraint adherence, first take (prompt v1)
+
+| model | licence | n | pass | spec_text | entity_missing | entity_type | correction | gender | filler | intent | words in band | USD per 1k scripts | latency s p50 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| **deepseek-v3.2** | MIT | 30 | **77%** | 4 | 1 | 0 | 0 | 0 | 1 | 1 | 92% | 1.76 | 4.8 |
+| gpt-oss-120b | Apache-2.0 | 30 | 53% | 5 | 8 | 0 | 0 | 1 | 1 | 0 | 88% | 1.70 | 9.5 |
+| mistral-large-3 | Apache-2.0 | 30 | 50% | 4 | 7 | 2 | 1 | 1 | 0 | 3 | 73% | 1.15 | 1.6 |
+| qwen3-235b | Apache-2.0 | 30 | 33% | 14 | 4 | 1 | 1 | 0 | 0 | 0 | 94% | 0.86 | 3.4 |
+
+The `spec_text` failures are real model errors, not checker noise:
+- Latin acronyms outside the markup (`UPI`, `EMI`, `home broadband`);
+- `-`, `—`, `…` and `.`;
+- broken markup (`[..|id}`, a type word with a space, an entity bracket opened but never closed).
+
+`entity_missing` covers two cases:
+- a given entity spoken but left without its `[..]` wrapper;
+- an entity re-verbalised. Mistral rewrote the PIN code's digits into a different grouping, which changes what W3 must hear.
+
+### Naturalness proxies vs real IndicVoices (per 100 words unless noted)
+
+The reference is W4's 628-clip pool (`data/w4/pool.jsonl`, IV Level 1 → SPEC §2). The same code is applied to both sides (`w2/report.py:style`).
+
+| text | texts | words/text | words/sent | fillers | discourse words | repeats | written-register words | distinct-2 | unmarked English % |
+|---|---|---|---|---|---|---|---|---|---|
+| IndicVoices L1 | 628 | 54.7 | 15.1 | 1.34 | 1.13 | 0.53 | 0.18 | 0.64 | — |
+| deepseek-v3.2 | 26 | 66.3 | 12.2 | 0.17 | 2.38 | 0.46 | 0.12 | 0.86 | 16–18 |
+| gpt-oss-120b | 25 | 76.7 | 15.3 | 0.16 | 1.46 | 0.26 | **0.63** | 0.78 | 28–31 |
+| mistral-large-3 | 26 | 64.0 | 13.5 | 0.12 | 2.88 | 0.54 | 0 | 0.83 | **8** |
+| qwen3-235b | 16 | 63.6 | 12.0 | 0.10 | 2.26 | 0.39 | 0.20 | 0.86 | 36–38 |
+
+Definitions:
+- **fillers:** अ अं ए उम्म हम्म.
+- **discourse words:** मतलब यानी अच्छा देखिए देखो बस एक्चुअली लाइक वैसे अरे हाँ यार.
+- **repeats:** adjacent identical words, digit-string words excluded.
+- **written register:** एवं तथा हेतु अतः उक्त किंतु परंतु यदि अथवा कृपया द्वारा अवश्य प्रदान सूचित निवेदन अनुरोध संपर्क.
+- **distinct-2:** unique word bigrams / all bigrams. It falls as a corpus grows (628 vs ~26 texts), so compare it across models only, not with IndicVoices.
+- **unmarked English:** words the generators marked English in at least 2 scripts that appear *outside* `{..|..}` markup. It's a proxy for markup recall, and the range reflects the lexicon growing between runs.
+- **Diversity:** no script pair in any model shares more than 7% of its word trigrams. The highest overlap with a few-shot example is 3%. The most common two-word opening covers 15% of DeepSeek's scripts and 38% of Qwen's.
+
+**Decision: DeepSeek-V3.2.**
+- It has the highest first-take pass rate (77% vs ≤ 53%; paired cells, ~2 binomial SE over the runner-up).
+- It has the fewest dropped entities, the highest length adherence after Qwen, and the most varied openings.
+- Its naturalness proxies are no worse than any other candidate's.
+- Cost is irrelevant at this scale (≈ $1.8 per 1,000 scripts).
+- Licence: MIT weights. INFERRED: using its outputs as training data carries no output terms; Bedrock adds only AWS's service terms.
+- Mistral Large 3 is the fallback: best markup recall, fastest, Apache-2.0.
+
+### Prompt iteration on the winner (same 30 cells, first take)
+
+| prompt | change | pass | fillers | discourse | repeats | written | words in band |
+|---|---|---|---|---|---|---|---|
+| v1 | — | 77% | 0.17 | 2.38 | 0.46 | 0.12 | 92% |
+| v2 | intent hints without copyable sentences (DeepSeek had pasted "मुझे वो कार्ड नहीं चाहिए" into a school-fees script); "make the story fit the entities" (it had written a ₹16 crore school bill); "usually one filler"; stronger English-markup rule; crore amounts capped at 10 | 60% | **0.06** | 2.08 | 0.24 | 0 | 79% |
+| **v3** | v2 + filler (50%) and repetition (30%) as **per-script requirements, checked** like entities; given entities spoken verbatim but left unwrapped get wrapped in code (exact string, so the value stays known) | 63% | **1.05** | 1.79 | **0.49** | 0.19 | 81% |
+
+- Asking for disfluency in the system prompt does nothing: 0 of 24 v2 scripts had a filler. Making it a checked cell gets v3 to IndicVoices' rates (1.05 vs 1.34 fillers and 0.49 vs 0.53 repeats per 100 words).
+- v3's lower first-take pass rate comes from the new `disfluency` check (4 of 30). The pilot runs up to 5 takes.
+- The v1-v3 differences in pass rate are within noise at n = 30. Its prompt changes are kept for the naturalness proxies, not for the pass rate.
+- Discourse words remain ~1.6× IndicVoices.
+- English share is ~12% of words (lexicon) vs ~1% in IndicVoices extempore (same lexicon, a lower bound there). This is by design: the scripts are customer-service Hinglish (§4 "English words, phrases or clauses"), not IV's general-topic speech. It is the one proxy deliberately far from IV.

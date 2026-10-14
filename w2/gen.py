@@ -32,7 +32,7 @@ _common = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--path-format=ab
                          capture_output=True, text=True).stdout.strip()
 DATA = (Path(_common).parent if _common else ROOT) / "data/w2"  # data lives in the main checkout, not the worktree
 
-PROMPT_V = "w2-v3"
+PROMPT_V = "w2-v4"
 MODELS = {  # name -> (Bedrock model id, USD per 1K input tokens, per 1K output; ap-south-1 on-demand, Pricing API 2026-10-14)
     "qwen3-235b": ("qwen.qwen3-235b-a22b-2507-v1:0", 0.00026, 0.00104),
     "gpt-oss-120b": ("openai.gpt-oss-120b-1:0", 0.00018, 0.00071),
@@ -75,7 +75,7 @@ CORR_W = {"none": 40, "entity": 45, "other": 15}
 MARKERS = ["नहीं नहीं", "मतलब", "{सॉरी|sorry}", "{आई मीन|I mean}", "एक मिनट"]
 MIX = {"light": (30, "light: 1 to 3 English words"),
        "medium": (50, "medium: 4 to 8 English words or short phrases"),
-       "heavy": (20, "heavy: 9 or more English words, including at least one whole English phrase or clause such as {इट्स नॉट वर्किंग|it's not working}")}
+       "heavy": (20, "heavy: 9 or more English words, including at least one whole English phrase or clause of your own that fits the situation")}
 LENGTH = {"short": (30, (30, 50)), "medium": (50, (55, 95)), "long": (20, (105, 140))}  # words
 GENDER_W = {"f": 50, "m": 50}
 DISFL_W = {"filler": {"yes": 50, "no": 50}, "repeat": {"yes": 30, "no": 70}}  # IV: 1.34 fillers, 0.53 repeats per 100 words
@@ -198,13 +198,22 @@ def spec(cell, key):
         for _ in range(50):
             wrong = (NUMFORMS[cell["numform"]](r, d) if i == 0 else banks.g_name(r) if right.type == "name"
                      else banks.g_place(r) if right.type == "place" else banks.g_org(r, d) if right.type == "org" else banks.g_product(r, d))
-            if dev(wrong.text) != dev(right.text) and wrong.type == right.type:
+            if dev(wrong.text) != dev(right.text) and wrong.type == right.type and near(wrong, right):
                 break
         corr = {"wrong": wrong, "right": right, "marker": cell["marker"]}
     elif cell["corr"] == "other":
         corr = {"marker": cell["marker"]}
     return {"cell": cell, "ents": ents, "corr": corr, "scenario": r.choice(SCENARIOS[d]),
             "setting": r.choice(SETTINGS_EVERYDAY if d == "everyday" else SETTINGS), "region": r.choice(REGIONS), "age": r.choice(AGES)}
+
+
+def near(a, b):
+    """A plausible slip: a count keeps its unit (साल stays साल), an amount stays within 3x."""
+    if a.type == "number":
+        return a.value.split(" ", 1)[1:] == b.value.split(" ", 1)[1:]
+    if a.type == "amount":
+        return 1 / 3 <= int(a.value) / int(b.value) <= 3
+    return True
 
 
 def wrap(e):
@@ -231,9 +240,9 @@ def user_prompt(s):
     else:
         lines.append("Self-correction: none.")
     lines.append(f"Also: {INTENTS[c['intent']][1]}")
-    d = [x for k, x in (("filler", "say the filler उम्म or हम्म once, where the speaker hesitates"),
-                        ("repeat", "repeat one word or restart once, as people do (मैं मैं, वो वो)")) if c.get(k) == "yes"]
-    lines.append("Disfluency: " + ("; ".join(d) if d else "none, no fillers") + ".")
+    d = [x for k, x in (("filler", "the filler उम्म or हम्म once, where the speaker hesitates"),
+                        ("repeat", "one word said twice in a row, as people do when they restart (मैं मैं, वो वो, मेरा मेरा)")) if c.get(k) == "yes"]
+    lines.append("Disfluency (required): " + " AND ".join(d) + "." if d else "Disfluency: none, no fillers.")
     return nfc("\n".join(lines))
 
 
@@ -408,7 +417,8 @@ def check(sp, raw, pid):
     mm, ff = gender_marks(toks)
     if (c["gender"] == "f" and mm) or (c["gender"] == "m" and ff):
         fails.append("gender")
-    if BANNED & set(toks):
+    bare = probe.transcript(probe.ENT.sub(r"\1", probe.EN.sub(" ", plain))).replace("।", " ").replace("?", " ").replace("!", " ")
+    if BANNED & set(bare.split()):  # outside English spans: ए is also the letter A ({ए टी एम|ATM})
         fails.append("filler")
     est = item["chars"] * S_PER_CHAR
     if not 9 <= est <= 57:
@@ -501,4 +511,9 @@ if __name__ == "__main__":
         "मैं [{क्रोमा|Croma}|org] से [{क्रोमा|Croma} स्टोर|org]"
     assert wrap_missing("[{क्रोमा|Croma} स्टोर|org]", Ent("{क्रोमा|Croma}", "org", "Croma", "org")) == "[{क्रोमा|Croma} स्टोर|org]"
     assert repeats("मैं मैं गया".split()) and not repeats("नौ नौ".split())
+    assert near(Ent("x", "number", "66 years", ""), Ent("y", "number", "21 years", "")) and not near(Ent("x", "number", "66 years", ""), Ent("y", "number", "98 minutes", ""))
+    assert near(Ent("x", "amount", "4250", ""), Ent("y", "amount", "1500", "")) and not near(Ent("x", "amount", "4250", ""), Ent("y", "amount", "1350", ""))
+    atm = {**s, "ents": [], "corr": None, "cell": {**s["cell"], "intent": "refusal", "filler": "no", "repeat": "no"}}
+    assert "filler" not in check(atm, "<script>नहीं, मुझे नया {ए टी एम|ATM} कार्ड नहीं चाहिए, बिल्कुल नहीं।</script>", "t2")[1]
+    assert "filler" in check(atm, "<script>ए, मुझे नया कार्ड नहीं चाहिए, बिल्कुल नहीं।</script>", "t3")[1]
     main()

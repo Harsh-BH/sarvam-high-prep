@@ -197,7 +197,30 @@ def coverage():
     print(table([list(d.values()) + [f"{unmarked(recs, lex):.1f}"]], list(d) + ["unmarked English %"]))
 
 
+def review():
+    """data/w2/review.tsv: Harsh's one optional list (≈15 min). A: every Hindi number word and fraction pattern the
+    verbaliser can emit (a typo here would be in every script). B: 10 pilot scripts and 10 IndicVoices transcripts
+    of similar length, shuffled; mark each real/generated and natural 1-3."""
+    import random
+    import banks
+    rows = [("A", f"{i}", w, "spelling ok? (y/fix)") for i, w in enumerate(banks.H)]
+    r = random.Random(0)
+    for f in ("lakh_crore", "frac", "small", "time", "date", "idcode"):
+        for i in range(3):
+            e = banks.NUMFORMS[f](random.Random(f"review{f}{i}"), r.choice(banks.DOMAINS))
+            rows.append(("A", e.value, gen.dev(e.text), "says this value? (y/fix)"))
+    recs = load(DATA / "scripts.jsonl")
+    ivs = [t for t, _ in iv_texts() if 45 <= len(t.split()) <= 90]
+    blind = [("gen", x["hi_text"]) for x in r.sample(recs, 10)] + [("iv", t) for t in r.sample(ivs, 10)]
+    r.shuffle(blind)
+    rows += [("B", f"b{i + 1:02d}", t, "real or generated? natural 1-3?") for i, (_, t) in enumerate(blind)]
+    out = DATA / "review.tsv"
+    out.write_text("section\tkey\ttext\task\tanswer\n" + "".join("\t".join(x) + "\t\n" for x in rows), encoding="utf-8")
+    (DATA / "review_key.tsv").write_text("".join(f"b{i + 1:02d}\t{s}\n" for i, (s, _) in enumerate(blind)))
+    print(f"{out}: {len(rows)} rows; answers for B in review_key.tsv")
+
+
 if __name__ == "__main__":
     assert toks("मैं मैं ठीक हूँ।") == ["मैं", "मैं", "ठीक", "हूँ"]
     assert style([("मैं मैं उम्म ठीक हूँ।", ["मैं मैं उम्म ठीक हूँ।"])], set())["repeats"] == 20.0
-    {"bake": bake, "coverage": coverage}[sys.argv[1]]()
+    {"bake": bake, "coverage": coverage, "review": review}[sys.argv[1]]()
