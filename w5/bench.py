@@ -508,25 +508,151 @@ def agreement(a1, a2, set_name, t1=None, t2=None):
     return out
 
 
+def qa_of(x, rec, set_name, cond):
+    """The stage's QA (align.word_flags + verdict) recomputed from a stored w2v result."""
+    ws = A.word_spans([tuple(t) for t in x["spans"]], "|")
+    times = [(round(s * A.FRAME, 3), round(e * A.FRAME, 3)) for s, e in A.fill_gaps(ws, level(set_name, rec, cond))]
+    flags = A.word_flags([w for ws_ in A.words_of(rec) for w in ws_], ws, times)
+    return A.verdict({"regret": x["regret"], "flags": flags}), flags, times
+
+
 def score():
-    print("### Control set (known truth): boundary error\n")
-    print("| aligner / cond / words | MAE ms | ≤50 ms % | ≤100 ms % | >200 ms % |\n|---|---|---|---|---|")
-    for al in ALIGNERS:
+    q = lambda xs: " / ".join(f"{1000 * v:+.0f}" for v in np.percentile(xs, [10, 50, 90]))
+    V = [("w2v+fill (stage)", "w2v", filled), ("w2v raw CTC", "w2v", None), ("MMS-FA (NC)", "mms", None), ("IndicConformer CTC", "ic", None)]
+    print("### Control set (known truth, junction-tolerant): boundary error\n")
+    print("| aligner / condition / words | MAE ms | ≤50 ms % | ≤100 ms % | >200 ms % |\n|---|---|---|---|---|")
+    for name, al, t in V:
         for cond in ("clean", "tel", "noise", "shift"):
-            e = ctrl_errors(al, cond)
-            if not e["all"]:
-                continue
-            for k in ("all", "filler", "english", "hindi", "long") if cond == "clean" else ("all",):
-                print(row(f"{al} / {cond} / {k}", e[k]))
-    for al in ALIGNERS:
-        e = ctrl_errors(al, "clean")
+            e = ctrl_errors(al, cond, t() if t else None)
+            for k in (("all", "hindi", "english", "filler", "long") if cond == "clean" else ("all",)) if e["all"] else ():
+                print(row(f"{name} / {cond} / {k}", e[k]))
+    print("\nSigned error vs the strict (character-token) truth, p10 / p50 / p90 ms:")
+    for name, al, t in V:
+        e = ctrl_errors(al, "clean", t() if t else None)
         if e["start"]:
-            q = lambda xs: " ".join(f"{1000 * v:+.0f}" for v in np.percentile(xs, [10, 50, 90]))
-            print(f"\n{al} clean signed error p10/p50/p90 ms: start {q(e['start'])}, end {q(e['end'])}")
+            print(f"- {name}: start {q(e['start'])}; end {q(e['end'])}")
+
+    print("\n### Real speech: IndicVoices human segment edges (642 clips)\n")
+    print("| aligner | edges | outside segment >100 ms % | >250 ms % | words inside inter-segment gaps |\n|---|---|---|---|---|")
+    for name, al, t in V:
+        o, g, n = seg_edges(al, "clean", t(set_name="real") if t else None)
+        if o:
+            o = np.array(o)
+            print(f"| {name} | {len(o)} | {100 * (o > .1).mean():.2f} | {100 * (o > .25).mean():.2f} | {g} of {n} |")
+
+    print("\n### Consistency under perturbation (|boundary - clean boundary|)\n")
+    print("| aligner / set / condition | boundaries | median ms | ≤20 ms % | ≤50 ms % | >200 ms % |\n|---|---|---|---|---|---|")
+    for name, al, t in V[:2]:
+        for st, conds in (("real", ("shift", "tel", "noise")), ("ctrl", ("shift", "tel", "noise"))):
+            for cond in conds:
+                d = consistency(al, st, cond, t(set_name=st) if t else None)
+                if d:
+                    d = np.array(d)
+                    print(f"| {name} / {st} / {cond} | {len(d)} | {1000 * np.median(d):.0f} | {100 * (d <= .02).mean():.1f} | "
+                          f"{100 * (d <= .05).mean():.1f} | {100 * (d > .2).mean():.2f} |")
+
+    print("\n### Agreement between independent aligners (clean)\n")
+    print("| pair / set | boundaries | median ms | ≤50 ms % | ≤100 ms % | >200 ms % |\n|---|---|---|---|---|---|")
+    for st in ("real", "syn"):
+        for (n1, a1, t1), (n2, a2, t2) in ((V[0], V[2]), (V[0], V[3]), (V[2], V[3]), (V[1], V[2])):
+            d = agreement(a1, a2, st, t1(set_name=st) if t1 else None, t2(set_name=st) if t2 else None)
+            if d:
+                d = np.array(d)
+                print(f"| {n1} vs {n2} / {st} | {len(d)} | {1000 * np.median(d):.0f} | {100 * (d <= .05).mean():.1f} | "
+                      f"{100 * (d <= .1).mean():.1f} | {100 * (d > .2).mean():.2f} |")
+
+    print("\n### QA rules on clean and corrupted audio (stage thresholds)\n")
+    print("| set / condition | records | rejected % | align_regret | unspoken | filler_short | edited word flagged % |\n|---|---|---|---|---|---|---|")
+    for st in ("real", "syn", "ctrl"):
+        rs = {r["id"]: r for r in recs(st)}
+        for cond in ("clean", "cut", "cutf", "dup"):
+            res = results("w2v", st, cond)
+            if not res:
+                continue
+            v = [(x, *qa_of(x, rs[k], st, cond)) for k, x in res.items() if not x.get("fail")]
+            rule = lambda r: sum(1 for _, x, _, _ in v if x == r)
+            hit = [any(i == x["edit"]["word"] for i, _ in f) for x, _, f, _ in v if x.get("edit")]
+            print(f"| {st} / {cond} | {len(v)} | {100 * sum(1 for _, x, _, _ in v if x) / len(v):.1f} | {rule('align_regret')} | "
+                  f"{rule('unspoken')} | {rule('filler_short')} | {f'{100 * np.mean(hit):.1f}' if hit else '–'} |")
+
+    print("\n### Filler durations after gap filling (ms, p10 / p50 / p90; share < 60 ms)\n")
+    for st, cond in (("real", "clean"), ("syn", "clean"), ("ctrl", "clean"), ("real", "cutf"), ("ctrl", "cutf"), ("syn", "cutf")):
+        rs, d = {r["id"]: r for r in recs(st)}, {}
+        for k, x in results("w2v", st, cond).items():
+            words = [w for ws in A.words_of(rs[k]) for w in ws]
+            times = qa_of(x, rs[k], st, cond)[2]
+            for i in ([x["edit"]["word"]] if x.get("edit") else [i for i, w in enumerate(words) if w in A.FILLERS]):
+                d.setdefault(words[i], []).append(times[i][1] - times[i][0])
+        print(f"- {st} / {cond}: " + "; ".join(f"{w} n={len(v)}: {' / '.join(f'{1000 * u:.0f}' for u in np.percentile(v, [10, 50, 90]))}, "
+                                                 f"<60 ms {100 * np.mean(np.array(v) < .06):.0f}%" for w, v in sorted(d.items(), key=lambda z: -len(z[1]))))
+
+    print("\n### CPU time (s per audio hour; machine shared with other jobs)\n")
+    for al in ("w2v", "mms", "ic"):
+        for st in ("real", "ctrl", "syn"):
+            res = [x for x in results(al, st, "clean").values() if "secs" in x]
+            if res:
+                print(f"- {al} / {st}: {3600 * sum(x['secs'] for x in res) / sum(x['audio_s'] for x in res):.0f} s per audio hour over {len(res)} clips")
+
+
+# ---------------------------------------------------------------- optional human check (one list, ~20 min)
+
+HUMAN = W5 / "human"
+QUESTIONS = {"bound": "Play the word alone. ok = whole word, nothing else | cut = part of it missing | extra = part of a neighbour audible",
+             "spoken": "Play the context. Is the bold word actually spoken? y / n",
+             "filler": "Play the context. Is there a filler sound (uh / umm / aa / hmm) where the bold word sits? y / n"}
+
+
+def human(*stage_dirs):
+    """Snippets + index.html + answers.tsv under data/w5/human/ from align stage outputs (DIR = a run's out/ folder
+    with records.jsonl, rejects.jsonl, raw/; the audio dir is resolved from SETS by record id range)."""
+    rnd = random.Random(14)
+    bound, spoken, filler = [], [], []
+    for d in map(Path, stage_dirs):
+        for l in open(d / "records.jsonl", encoding="utf-8"):
+            r = json.loads(l)
+            for i, w in enumerate(r["hi_words"]):
+                (filler if w["w"] in A.FILLERS else bound).append((r, i, None))
+        for l in open(d / "rejects.jsonl", encoding="utf-8"):
+            x = json.loads(l)
+            if x.get("detail") and "flags" in x["detail"]:
+                raw = json.loads((d / "raw" / f"{x['id']}.json").read_text())
+                for i, f in x["detail"]["flags"]:
+                    (spoken if f == "unspoken" else filler).append((x["id"], i, raw))
+    tel = lambda r: r.get("_qa", {}).get("audio_qc", {}).get("telephone")
+    pick = (rnd.sample([b for b in bound if tel(b[0])], 12) + rnd.sample([b for b in bound if tel(b[0]) is False], 12)
+            + rnd.sample([b for b in bound if b[0]["source"]["synthetic"]], 6))
+    items = [("bound", *b) for b in pick] + [("spoken", *s) for s in rnd.sample(spoken, min(15, len(spoken)))]
+    short = [f for f in filler if f[2] is not None]  # filler_short rejects, then kept fillers up to 10
+    short = rnd.sample(short, min(5, len(short)))
+    items += [("filler", *f) for f in short + rnd.sample([f for f in filler if f[2] is None], 10 - len(short))]
+    rnd.shuffle(items)
+    allrecs = {r["id"]: r for s in ("real", "syn") for r in recs(s)}
+    (HUMAN / "clips").mkdir(parents=True, exist_ok=True)
+    rows, html = [], []
+    for n, (kind, r, i, raw) in enumerate(items, 1):
+        rec = allrecs[r["id"] if isinstance(r, dict) else r]
+        words = [w for ws in A.words_of(rec) for w in ws]
+        times = [(w["start"], w["end"]) for w in r["hi_words"]] if isinstance(r, dict) else \
+            [(s * A.FRAME, e * A.FRAME) for s, e in raw["words"]]
+        x = read24(SETS["syn" if rec["source"]["synthetic"] else "real"][1] / rec["audio"])
+        a, b = (times[i][0], times[i][1]) if kind == "bound" else (max(0, times[max(0, i - 2)][0]), times[min(len(times) - 1, i + 2)][1])
+        f = f"clips/{n:02d}.wav"
+        write24(HUMAN / f, x[round(a * 24000):round(b * 24000)])
+        ctx = " ".join(f"<b>{w}</b>" if j == i else w for j, w in enumerate(words) if abs(j - i) <= 3)
+        rows.append([f"{n:02d}", kind, rec["id"], str(i), words[i], f"{times[i][0]:.3f}-{times[i][1]:.3f}", ""])
+        html.append(f"<tr><td>{n:02d}</td><td>{kind}</td><td><audio controls preload=none src='{f}'></audio></td><td>{ctx}</td></tr>")
+    (HUMAN / "answers.tsv").write_text("item\tkind\tid\tword_idx\tword\ttimes\tanswer\n" + "".join("\t".join(r) + "\n" for r in rows), encoding="utf-8")
+    (HUMAN / "index.html").write_text(
+        "<!doctype html><meta charset=utf-8><title>W5 alignment check</title><style>body{font:16px sans-serif;margin:16px}"
+        "td{padding:4px 8px;border-bottom:1px solid #ccc}</style><h1>W5 alignment check (optional, about 20 min)</h1><ul>"
+        + "".join(f"<li><b>{k}</b>: {q}</li>" for k, q in QUESTIONS.items())
+        + "</ul><p>Write each answer in the <code>answer</code> column of answers.tsv.</p><table>" + "".join(html) + "</table>",
+        encoding="utf-8")
+    print(f"{len(rows)} items -> {HUMAN}/index.html, answers.tsv")
 
 
 if __name__ == "__main__":
     if sys.argv[1].startswith("--"):
         stage(sys.argv[1:])
     else:
-        {"ctrl": ctrl, "run": run, "score": score}[sys.argv[1]](*sys.argv[2:])
+        {"ctrl": ctrl, "run": run, "score": score, "human": human}[sys.argv[1]](*sys.argv[2:])

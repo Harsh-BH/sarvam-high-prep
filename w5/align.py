@@ -16,12 +16,13 @@ in this run folder: the Viterbi token spans with their frame posteriors, and the
 copies these timings; it never re-aligns. Records that fail a QA rule (RULES) go to rejects.jsonl (design §3.3:
 drop, never review).
 """
-import argparse, json, wave
+import argparse, json, os, wave
 from pathlib import Path
 
-import numpy as np
-import torch
-import torchaudio.functional as AF
+os.environ.setdefault("MKL_CBWR", "AUTO,STRICT")  # MKL: same bits whatever the buffer alignment (set before torch loads)
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+import torchaudio.functional as AF  # noqa: E402
 
 MODEL, REV = "Harveenchadha/vakyansh-wav2vec2-hindi-him-4200", "e2568c3f7868d8aa3aaabcf28fa100d10d54c170"
 SR, HOP, RF, FRAME = 16000, 320, 400, 0.02  # wav2vec2 conv stack: frame k reads samples [320k, 320k + 400)
@@ -56,6 +57,7 @@ class W2V:
         from transformers import Wav2Vec2ForCTC
         torch.set_num_threads(THREADS)
         torch.use_deterministic_algorithms(True)
+        torch.backends.mkldnn.enabled = False  # oneDNN kernels varied in the last bits between processes
         self.model = Wav2Vec2ForCTC.from_pretrained(MODEL, revision=REV).eval()
         vocab = json.loads(Path(hf_hub_download(MODEL, "vocab.json", revision=REV)).read_text())
         self.tokens = ["<b>"] + sorted(vocab, key=vocab.get)[4:]
