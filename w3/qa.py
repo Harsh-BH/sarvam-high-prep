@@ -43,7 +43,10 @@ FILLERS = {"अ", "अं", "आ", "ए", "उम्म", "हम्म"}
 # round-2 takes were ये->यह 5, पे->पर 5, मे->में 4, न->ना, हैलो->हेलो, and ऐ-initial English words, folded in canon;
 # a TTS reading the script would not swap them).
 # Not a substitution, like same-value number spellings.
-SAME = {frozenset(p) for p in (("ये", "यह"), ("पे", "पर"), ("मे", "में"), ("न", "ना"), ("वो", "वह"), ("हैलो", "हेलो"))}  # SPEC R9; ASRs drop them (W4: 0% kept), so a missing filler is unverifiable
+# W2 pilot (500 scripts, 665 takes): आइ->आई 38 (English "I"), है->हैं 12 (nasalisation only), भई->भाई 8. INFERRED: ASR
+# spelling, since both ASRs agree and the pairs sound (almost) alike; a wrong word the TTS said would not look like this.
+SAME = {frozenset(p) for p in (("ये", "यह"), ("पे", "पर"), ("मे", "में"), ("न", "ना"), ("वो", "वह"), ("हैलो", "हेलो"),
+                               ("आइ", "आई"), ("भई", "भाई"), ("है", "हैं"))}  # SPEC R9; ASRs drop them (W4: 0% kept), so a missing filler is unverifiable
 
 
 def canon(t):
@@ -560,6 +563,7 @@ if __name__ == "__main__":
     assert agreed(canon("पाँच छह चार"), [canon("पांच छः चार")]) == ([], [], [])
     assert agreed(canon("मेरे नाम पे चेक"), [canon("मेरे नाम पर चेक")]) == ([], [], [])
     assert agreed(canon("हैलो इट वाज़ ऐन ऐड"), [canon("हेलो इट वाज एन एड")]) == ([], [], [])
+    assert agreed(canon("आइ मीन भई ये है"), [canon("आई मीन भाई यह हैं")]) == ([], [], [])
     ch = quiet_chunks(np.r_[np.ones(80000), np.zeros(320), np.ones(160000)].astype(np.float32))
     assert ch[0] == (0, 80000) and ch[-1][1] == 240320 and all(j - i <= 7 * 16000 for i, j in ch), ch
     a = sys.argv[1:]
