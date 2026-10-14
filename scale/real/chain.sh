@@ -10,7 +10,7 @@ cd "$(dirname "$0")/../.."
 tag=$1 prev=$2
 D=/home/harsh1/github-repos/sarvam-high-prep/data/scale-real
 CACHE=/home/harsh1/github-repos/sarvam-high-prep/data/cache
-LOG=$D/chains/$tag.tsv SLOTS=4  # the account allows 10 spot instances across ALL training jobs, shared
+LOG=$D/chains/$tag.tsv SLOTS=${SLOTS:-4}  # the account allows 10 spot instances across ALL training jobs, shared
 mkdir -p "$D/chains"
 touch "$LOG"
 echo "$prev" > "$D/chains/$tag.cut"
