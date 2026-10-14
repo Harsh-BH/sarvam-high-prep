@@ -106,6 +106,16 @@ def latency(rec, words, failed):
     return {k: round(float(v), 3) for k, v in out.items()}
 
 
+def text_words(events, k, sep):
+    """Emitted text -> [(word, t, t)], t = emission time of the event that completes the word. sep: what joins two
+    events; "" for runners that keep the detokenizer's leading space (text_join), " " for older outputs."""
+    s, ts = "", []
+    for e in events:
+        s += e["text"] + sep
+        ts += [e[k]] * (len(e["text"]) + len(sep))
+    return [(m.group(), ts[m.end() - 1], ts[m.end() - 1]) for m in re.finditer(r"\w[\w'’-]*", s)]
+
+
 def asr_words(wav_paths, model):
     """-> [(text, [(word, start, end)])] with Whisper word timestamps; times in the given audio."""
     import torch, torchaudio
@@ -167,8 +177,7 @@ def score(recs, sys_dir, asr=None, comet=None, asr_model="openai/whisper-large-v
             p[f"{track}_ent"] = entity_hits(ref, p[track])
         for k in keys:
             p[f"lat_{k}"] = latency(r, to_timeline(a["words"], o["frames"], k), p["failed"])
-            tw = [(w, e[k], e[k]) for e in o.get("text_events", []) for w in e["text"].split() if re.search(r"\w", w)]
-            p[f"text_lat_{k}"] = latency(r, tw, p["failed"])
+            p[f"text_lat_{k}"] = latency(r, text_words(o.get("text_events", []), k, o.get("text_join", " ")), p["failed"])
         per.append(p)
     comet_fn = comet or (lambda t: comet_scores(t, comet_model))
     for track in ("asr", "text"):
@@ -234,6 +243,9 @@ def selftest():
     assert entity_hits("Pay Ravi 25,000 rupees.", "pay ravi twenty five thousand rupees") == (1, 1, 1, 1)
     assert entity_hits("Pay Ravi 3.5 lakh.", "Pay Ravi three lakh.") == (1, 0, 1, 1)
     assert laal([1.0, 2.0], 2.0, 2) == 1.0  # gamma 1: delays 1 and 2-1
+    ev = [{"t": 1.0, "text": " Pay"}, {"t": 2.0, "text": " Ra"}, {"t": 3.0, "text": "vi"}, {"t": 4.0, "text": ","}]
+    assert text_words(ev, "t", "") == [("Pay", 1.0, 1.0), ("Ravi", 3.0, 3.0)], text_words(ev, "t", "")
+    assert [w for w, *_ in text_words(ev, "t", " ")] == ["Pay", "Ra", "vi"]  # old outputs: one word per event
     rep, per = score(recs, d, asr=lambda ps: [words[p.stem] for p in ps], comet=lambda t: [1.0 if h else 0.0 for _, h, _ in t])
     p1, p3 = per[0], per[2]
     assert p1["lat_t"] == {"start_offset": 1.6, "end_offset": -1.1, "laal": 0.525, "sent_lag": 0.15}, p1["lat_t"]

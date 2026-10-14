@@ -16,7 +16,7 @@ Agent: SeamlessStreaming's s2st pipeline without VAD, plus the detokenizer branc
 agreed with w8d (max_len_a=1, max_len_b=200 = the text decoder's own defaults; streaming_evaluate's 0/100 truncates
 our 60 s records). --ckpt: a w8d fine-tuned monotonic decoder, {"model": state_dict}, loaded strict over the base.
 """
-import argparse, json, re, time, wave
+import argparse, json, time, wave
 from pathlib import Path
 
 import numpy as np
@@ -36,12 +36,17 @@ SETTINGS = dict(task="s2st", tgt_lang="eng", device="cuda:0", dtype="fp16", min_
                 decision_threshold=0.5, no_early_stop=True, max_len_a=1, max_len_b=200, min_unit_chunk_size=50)
 
 
+class Detok(UnitYDetokenizerAgent):
+    def decode(self, x):  # keep the leading word boundary; the base strips it, so "bank" + "ing" read as two words
+        return x.replace(" ", "").replace("\u2581", " ")
+
+
 class Agent(UnitYAgentTreePipeline):
     pipeline = {
         OnlineFeatureExtractorAgent: [OfflineWav2VecBertEncoderAgent],
         OfflineWav2VecBertEncoderAgent: [UnitYMMATextDecoderAgent],
-        UnitYMMATextDecoderAgent: [UnitYDetokenizerAgent, NARUnitYUnitDecoderAgent],
-        UnitYDetokenizerAgent: [],
+        UnitYMMATextDecoderAgent: [Detok, NARUnitYUnitDecoderAgent],
+        Detok: [],
         NARUnitYUnitDecoderAgent: [VocoderAgent],
         VocoderAgent: [],
     }
@@ -96,8 +101,8 @@ def run_one(agent, x24, sync=torch.cuda.synchronize):
         sync()
         busy = start + time.perf_counter() - tic
         for o in outs if isinstance(outs, list) else [outs]:
-            if isinstance(o, TextSegment) and isinstance(o.content, str) and o.content.strip():
-                events.append({"t": round(busy, 3), "t0": round(avail, 3), "text": o.content.strip()})
+            if isinstance(o, TextSegment) and isinstance(o.content, str) and o.content:
+                events.append({"t": round(busy, 3), "t0": round(avail, 3), "text": o.content})  # raw: " word" starts one
             elif isinstance(o, SpeechSegment) and len(o.content):
                 y = torchaudio.functional.resample(torch.tensor(o.content, dtype=torch.float32), o.sample_rate, RATE)
                 y = (y.clamp(-1, 1) * 32767).round().to(torch.int16).numpy()
@@ -141,9 +146,9 @@ def main():
         tic = time.perf_counter()
         frames, pcm, events, failed = run_one(agent, x)
         write_wav(a.out / f"{r['id']}.wav", pcm)
-        text = re.sub(r" ([,.?!;:])", r"\1", " ".join(e["text"] for e in events))  # the detokenizer emits "," alone
+        text = " ".join("".join(e["text"] for e in events).split())
         (a.out / f"{r['id']}.json").write_text(json.dumps({
-            "id": r["id"], "frames": frames, "text": text, "text_events": events, "failed": failed,
+            "id": r["id"], "frames": frames, "text": text, "text_events": events, "text_join": "", "failed": failed,
             "compute_s": round(time.perf_counter() - tic, 3), "src_s": round(len(x) / RATE, 3)}, ensure_ascii=False))
         print(f"{r['id']}: {len(x) / RATE:.1f} s in {time.perf_counter() - tic:.1f} s, {len(pcm) / RATE:.1f} s out, "
               f"failed={failed}: {text[:120]}", flush=True)
