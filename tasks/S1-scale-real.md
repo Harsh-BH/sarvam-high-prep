@@ -52,3 +52,29 @@ Measured from W6's archived usage on the real pilot: translation costs **$0.644 
 `w6/translate.py` `CAP_INR` is raised from 2,500 to 6,000. That cap is on the *shared* `w6` ledger, in estimate units. S1's real spend is computed from the usage in its own archived responses.
 
 ## Log
+
+### 2026-10-14, cut round 1 (10 shards)
+
+| Shard | Run | Clips | Conv h | Ext h | Read h | Streamed | Wall |
+|---|---|---|---|---|---|---|---|
+| v1p0 (smoke) | `stages/cut/20261014T205116Z-d48bdc4` | 405 | 0.24 | 1.61 | 0.40 | 14.3 GB (all) | 497 s |
+| v1p1 | `…205938Z-87daaf7-v1p1` | 440 | 0.48 | 1.55 | 0.40 | 14.3 GB | 695 s |
+| v2p0 | `…-v2p0` | 285 | 0.10 | 1.55 | 0.23 | 17.9 GB | 806 s |
+| v2p1 | `…-v2p1` | 284 | 0.08 | 1.55 | 0.16 | 17.9 GB | 893 s |
+| v3p0 | `…-v3p0` | 580 | 0.88 | 1.55 | 0.40 | 54.7 GB | 691 s |
+| v3p1 | `…-v3p1` | 547 | 0.89 | 1.55 | 0.40 | 54.7 GB | 943 s |
+| v4p0 | `…-v4p0` | 433 | 0.61 | 1.55 | 0.41 | 41.6 GB | 1,073 s |
+| v4p1 | `stages/cut/20261014T210058Z-b2f3dca-v4p1` | 480 | 0.80 | 1.56 | 0.40 | 41.6 GB | 604 s |
+| v5p0 | `…-v5p0` | 356 | 0.10 | 1.55 | 0.40 | 21.6 GB | 343 s |
+| v5p1 | `…-v5p1` | 387 | 0.10 | 1.55 | 0.40 | 21.6 GB | 940 s |
+| **Total** | | **4,197** | **4.28** | **15.59** | **3.61** | | **23.48 h** |
+
+(`…` = `stages/cut/20261014T205938Z-87daaf7`.) All runs: validator 0 violations; `report.py heldout` 0 of 4,197.
+
+- **Conversation is scarce.** Each sorted archive holds call uuids at its two ends and numeric extempore/read files in a long middle block. W1's first-500 MB sample was call-heavy for that reason, and so misleading. Under the strict one-speaker rule, a call side yields 1–7 s of clips on average. Every shard streamed its whole archive (the Conversation quota never filled), so **4.28 h is all the Conversation in IV Hindi train** under this rule and this held-out set.
+- **Held-out exclusion is costly.** 16,348 file visits were skipped as held-out: about a quarter of the files in each half, because IV-valid speakers record heavily in train too.
+- **Extempore and Read** filled their quotas early, so most of each archive was streamed past. Candidates in the processed files alone came to 38.5 h of Extempore.
+- Streaming ran at 20–90 MB/s per job.
+- `w1/ids.tsv` +4,197 rows (commit ddb2ee7).
+
+**Round 2 (top-ups):** each shard is continued (`--continue`), with quota Extempore 1.0 h + Read 0.15 h, ids from rec-011001. The target is ≈35 h cut, so that ≈30 h survive the stages.
