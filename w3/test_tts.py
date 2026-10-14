@@ -101,6 +101,12 @@ def main():
               bank=BANK, spool=spool)
     models = {json.loads(l)["source"]["model"] for l in open(mix / "records.jsonl")}
     assert models == {"w3-selfcheck-tone", "w3-selfcheck-tone-2"}, models
+    rot = Path(tempfile.mkdtemp())  # a rejected take is retaken on the other engine
+    it = iter(["गलत", GOOD[S2[0]["pid"]]])
+    tts.stage(S2[:1], rot, "fake,fake2", s3=f, asr={"w2v": lambda x: next(it)}, load16k=lambda p: None, ids=ids2,
+              bank=BANK, spool=spool)
+    t = [json.loads(l) for l in open(rot / "takes.jsonl")]
+    assert [x["verdict"] for x in t] == ["reject", "keep"] and t[0]["engine"] != t[1]["engine"], t
 
     n, mins = tts.listen(out, Path(tempfile.mkdtemp()), per_gender=1, fillers=1)
     assert n == 2 and mins > 0  # one voice per gender; no filler in these scripts

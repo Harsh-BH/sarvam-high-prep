@@ -307,7 +307,7 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
         p.touch()
         if (b := p.read_bytes()) and not b.endswith(b"\n"):
             p.write_bytes(b[: b.rfind(b"\n") + 1])  # a crash tore the last line: drop it, that script is redone
-    engines = engine.split(",")  # several: each script goes to one, by a stable hash of its pid (acoustic variety)
+    engines = engine.split(",")  # several: a script starts on one (stable hash of its pid), retakes rotate
     banks = {e: bank or voices(e, ENGINES[e]["clone"]) for e in engines}
     ids = ids_table() if ids is None else ids
     takes = {r["key"]: r for r in jsonl(out / "takes.jsonl")}
@@ -349,11 +349,12 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
 
     voice_row = {v["voice"]: v for b in banks.values() for v in b}
     for rid, s in todo:
-        eng = engines[int(hashlib.sha256(f"engine {s['pid']}".encode()).hexdigest()[:8], 16) % len(engines)]
-        E, service = ENGINES[eng], f"tts-{eng}"
-        v = pick_voice(s, banks[eng])
+        first = int(hashlib.sha256(f"engine {s['pid']}".encode()).hexdigest()[:8], 16)
         tried = []
         for take in range(1, (1 if bench else max_takes) + 1):
+            eng = engines[(first + take - 1) % len(engines)]  # first take by hash; each retake moves to the next engine
+            E, service = ENGINES[eng], f"tts-{eng}"
+            v = pick_voice(s, banks[eng])
             req = {"engine": eng, "model": E["model"], "rev": E["rev"], "voice": v["voice"], "ref": v["ref"],
                    "text": s["tts_dev"], "seed": take, "take": take, **({"opts": E["opts"]} if "opts" in E else {})}
             # own GPU, no API bill: inr 0, no cap
@@ -412,7 +413,7 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
             if not bench:
                 with open(out / "rejects.jsonl", "a", encoding="utf-8") as f:
                     detail = "; ".join(f"take{r['take']}: {','.join(r['why'])}" for r in takes.values()
-                                       if r["pid"] == s["pid"] and r["engine"] == eng)
+                                       if r["pid"] == s["pid"])
                     f.write(json.dumps({"id": rid, "stage": "tts", "rule": "qa", "detail": detail}, ensure_ascii=False) + "\n")
 
 
