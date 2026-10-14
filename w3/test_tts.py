@@ -74,13 +74,20 @@ def main():
     assert recs[0]["sentences"] == [{"hi_text": S[0]["hi_text"]}] and recs[0]["source"]["source_file"] == "tts/rec-400100.wav"
     bins = [k for k in f.objects if k.startswith("archive/api/tts-fake/") and k.endswith(".bin")]
     assert len(bins) == 6, bins  # every take archived, kept or not
-    kept = f.objects["archive/tts/rec-400100.wav"]
-    assert kept == (out / "audio/rec-400100.wav").read_bytes() and "archive/tts/rec-400101.wav" not in f.objects
+    kept = f.objects[recs[0]["_archive"]["tts"]]
+    assert recs[0]["_archive"]["tts"].startswith("archive/tts/rec-400100-") and recs[0]["_archive"]["tts"] in f.objects
+    assert kept == (out / "audio/rec-400100.wav").read_bytes() and not any(k.startswith("archive/tts/rec-400101") for k in f.objects)
     errs, hours = validate(open(out / "records.jsonl").read().splitlines(), out, partial=True)
     assert not errs, errs
     takes = [json.loads(l) for l in open(out / "takes.jsonl")]
     assert [t["verdict"] for t in takes] == ["reject", "keep", "reject", "reject", "reject", "keep"]
     assert "ent1" in takes[0]["why"] and "skip" in takes[0]["why"]
+
+    again = Path(tempfile.mkdtemp())  # another run keeps another take for the same id: both stay archived, no clash
+    tts.ENGINES["fake2"] = {**tts.ENGINES["fake"], "model": "w3-selfcheck-tone-2"}
+    run(again, S[:1], [GOOD["w2-00001"]], f, spool, engine="fake2")
+    other = json.loads(open(again / "records.jsonl").readline())
+    assert other["id"] == "rec-400100" and other["_archive"]["tts"] != recs[0]["_archive"]["tts"]
 
     n = len(calls)  # a finished run is a no-op: nothing rendered, nothing heard
     run(out, S, [], f, spool, synth=counting)

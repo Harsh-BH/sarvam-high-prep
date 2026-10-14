@@ -16,8 +16,8 @@ w3/voices.tsv), then take 1, 2, ... (seed = take) through archive.archive_call, 
 archived write-once under archive/api/tts-<engine>/<key>.bin|.json and no take is ever rendered twice. Each take is
 heard by two ASRs from other families than the TTS (vakyansh CTC, IndicConformer RNNT) and judged by w3/qa.py's rules
 plus "no agreed substitution" (design §3.3: drop, don't review). The first passing take becomes the record:
-OUT/audio/<id>.wav (24 kHz s16) and the same bytes write-once at archive/tts/<id>.wav (+ .meta.json), which the
-rebuild copies (`_archive.tts`). hi_text = the script's transcript, which QA says the take actually said.
+OUT/audio/<id>.wav (24 kHz s16) and the same bytes write-once at archive/tts/<id>-<take key[:16]>.wav (+ .meta.json),
+which the rebuild copies (`_archive.tts`). hi_text = the script's transcript, which QA says the take actually said.
 OUT/takes.jsonl: one QA row per take. OUT/asr/<model>.jsonl: hypotheses by take key, so a re-run never re-decodes.
 --bench: no ids, no records, take 1 of every --engine per script: takes.jsonl is the benchmark (stage `tts_bench`).
 """
@@ -390,9 +390,11 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
                 b24 = to24k(b)
                 dur = round(seconds(b24)[0], 3)
                 take_key = f"archive/api/{service}/{key}.bin"
-                if not store.put_once(f"archive/tts/{rid}.wav", b24, s3) and store.get(f"archive/tts/{rid}.wav", s3) != b24:
-                    raise SystemExit(f"archive/tts/{rid}.wav already holds different audio")
-                store.put_once(f"archive/tts/{rid}.wav.meta.json", json.dumps(
+                # named by id and take: another run (other engine, voice or rules) may keep a different take for this id
+                kept = f"archive/tts/{rid}-{key[:16]}.wav"
+                if not store.put_once(kept, b24, s3) and store.get(kept, s3) != b24:
+                    raise SystemExit(f"{kept} already holds different audio")
+                store.put_once(f"{kept}.meta.json", json.dumps(
                     {"sha256": hashlib.sha256(b24).hexdigest(), "take": take_key, "request": req, "render": meta},
                     ensure_ascii=False, indent=1).encode(), s3)
                 (out / "audio" / f"{rid}.wav").write_bytes(b24)
@@ -406,7 +408,7 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
                                "take_key": take_key, "rejected_takes": tried, "src_rate": meta["sr"]},
                        "_qa": {"tts": {k: row[k] for k in ("best_cer", "cer", "ent_n", "en_n", "spc_rel", "pause", "lead",
                                                            "trail", "asrs")}},
-                       "_archive": {"tts": f"archive/tts/{rid}.wav"}}
+                       "_archive": {"tts": kept}}
                 with open(out / "records.jsonl", "a", encoding="utf-8") as f:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
                 break
