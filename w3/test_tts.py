@@ -108,6 +108,14 @@ def main():
     t = [json.loads(l) for l in open(rot / "takes.jsonl")]
     assert [x["verdict"] for x in t] == ["reject", "keep"] and t[0]["engine"] != t[1]["engine"], t
 
+    both = Path(tempfile.mkdtemp())  # bench with two engines: take 1 of each, for every script
+    it = iter(["x"] * 6)
+    tts.stage(S, both, "fake,fake2", s3=f, asr={"w2v": lambda x: next(it)}, load16k=lambda p: None, bank=BANK,
+              spool=spool, bench=True)
+    t = [json.loads(l) for l in open(both / "takes.jsonl")]
+    assert len(t) == 6 and {(x["pid"], x["engine"]) for x in t} == {(s["pid"], e) for s in S for e in ("fake", "fake2")}
+    assert all(x["take"] == 1 for x in t)
+
     n, mins = tts.listen(out, Path(tempfile.mkdtemp()), per_gender=1, fillers=1)
     assert n == 2 and mins > 0  # one voice per gender; no filler in these scripts
 

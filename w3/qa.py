@@ -38,7 +38,11 @@ SPC_LO, SPC_HI = 0.6, 1.6  # seconds-per-char outside [lo, hi] x the engine-voic
 PAUSE_MAX = 1.5       # longest internal pause (s)
 EDGE_MAX = 1.0        # leading or trailing silence (s)
 CLIP_MAX = 1e-4       # fraction of samples at full scale
-FILLERS = {"अ", "अं", "आ", "ए", "उम्म", "हम्म"}  # SPEC R9; ASRs drop them (W4: 0% kept), so a missing filler is unverifiable
+FILLERS = {"अ", "अं", "आ", "ए", "उम्म", "हम्म"}
+# Colloquial or spelling variants that both ASRs rewrite to the standard form (measured: the agreed substitutions in the
+# round-2 takes were ये->यह 5, पे->पर 5, मे->में 4, न->ना, ऐप->एप; a TTS reading the script would not swap them).
+# Not a substitution, like same-value number spellings.
+SAME = {frozenset(p) for p in (("ये", "यह"), ("पे", "पर"), ("मे", "में"), ("न", "ना"), ("वो", "वह"), ("ऐप", "एप"))}  # SPEC R9; ASRs drop them (W4: 0% kept), so a missing filler is unverifiable
 
 
 def canon(t):
@@ -129,7 +133,8 @@ def word_ops(ref, hyp):
             extra.add(i1)
         elif op == "replace" and i2 - i1 == j2 - j1:  # word for word: same-value number spellings (छह/छः) are fine
             subs.update(i for i, x in zip(range(i1, i2), h[j1:j2])
-                        if cer(r[i], x) >= 0.5 and not (_nk(r[i]) in NUM and NUM[_nk(r[i])] == NUM.get(_nk(x))))
+                        if cer(r[i], x) >= 0.5 and not (_nk(r[i]) in NUM and NUM[_nk(r[i])] == NUM.get(_nk(x)))
+                        and frozenset((r[i], x)) not in SAME)
         elif op == "replace" and cer(rs, hs) >= 0.5:
             subs.update(range(i1, i2))
     return gone, extra, subs
@@ -551,6 +556,7 @@ if __name__ == "__main__":
     assert agreed("और ब्रांच लुधियाना", ["और बांस लुधियाना"]) == ([], [], ["ब्रांच"])
     assert num_hit(canon("चौंसठ साल"), canon("चौसठ साल"))
     assert agreed(canon("पाँच छह चार"), [canon("पांच छः चार")]) == ([], [], [])
+    assert agreed(canon("मेरे नाम पे चेक"), [canon("मेरे नाम पर चेक")]) == ([], [], [])
     ch = quiet_chunks(np.r_[np.ones(80000), np.zeros(320), np.ones(160000)].astype(np.float32))
     assert ch[0] == (0, 80000) and ch[-1][1] == 240320 and all(j - i <= 7 * 16000 for i, j in ch), ch
     a = sys.argv[1:]

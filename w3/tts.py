@@ -19,7 +19,7 @@ plus "no agreed substitution" (design §3.3: drop, don't review). The first pass
 OUT/audio/<id>.wav (24 kHz s16) and the same bytes write-once at archive/tts/<id>.wav (+ .meta.json), which the
 rebuild copies (`_archive.tts`). hi_text = the script's transcript, which QA says the take actually said.
 OUT/takes.jsonl: one QA row per take. OUT/asr/<model>.jsonl: hypotheses by take key, so a re-run never re-decodes.
---bench: no ids, no records, one take per script: takes.jsonl is the engine benchmark (stage `tts_bench`).
+--bench: no ids, no records, take 1 of every --engine per script: takes.jsonl is the benchmark (stage `tts_bench`).
 """
 import argparse, hashlib, io, json, os, re, subprocess, sys, tempfile, time, wave
 from datetime import datetime, timezone
@@ -201,8 +201,9 @@ def voice_rate(voice):
     return RATE_LO + (RATE_HI - RATE_LO) * (int(hashlib.sha256(voice.encode()).hexdigest()[:8], 16) % 1000) / 999
 
 
-def load_omnivoice():
-    """OmniVoice (k2-fsa; code Apache-2.0, weights CC BY-NC): zero-shot cloning from a 3-10 s reference + transcript."""
+def load_omnivoice(paced=True):
+    """OmniVoice (k2-fsa; code Apache-2.0, weights CC BY-NC): zero-shot cloning from a 3-10 s reference + transcript.
+    paced: duration from the voice's conversational rate; else the model's own estimate from the reference's pace."""
     need("omnivoice==0.2.1")
     import torch
     from omnivoice import OmniVoice
@@ -214,7 +215,7 @@ def load_omnivoice():
             x, sr = ref_audio(v)
             prompts[v["voice"]] = m.create_voice_clone_prompt(ref_audio=(torch.from_numpy(x), sr), ref_text=v["ref_text"])
         seed_all(seed)
-        dur = len(re.sub(r"[\s,]", "", text)) / voice_rate(v["voice"]) + 0.4  # + leading/trailing silence
+        dur = len(re.sub(r"[\s,]", "", text)) / voice_rate(v["voice"]) + 0.4 if paced else None  # + edge silence
         return m.generate(text=text, language="hi", voice_clone_prompt=prompts[v["voice"]], duration=dur)[0], 24000
     return synth
 
@@ -263,6 +264,8 @@ def load_fake():
 ENGINES = {
     "omnivoice": {"model": "k2-fsa/OmniVoice", "rev": "c5fdb5ccb189668d56333f77ba2629f4cd7535f4", "clone": True,
                   "load": load_omnivoice, "opts": f"duration=chars/rate(voice)+0.4, rate {RATE_LO}-{RATE_HI}"},
+    "omnivoice-free": {"model": "k2-fsa/OmniVoice", "rev": "c5fdb5ccb189668d56333f77ba2629f4cd7535f4", "clone": True,
+                       "load": lambda: load_omnivoice(paced=False)},
     "voxcpm2": {"model": "openbmb/VoxCPM2", "rev": "32279effe8c19989596f05d353d1447f51d9e915", "clone": True,
                 "load": load_voxcpm2},
     "pocket": {"model": "saryps-labs/pocket-tts-hindi", "rev": "6bff9c1e776bb90c68dd05c2467c62d1ecdf1b51", "clone": True,
@@ -312,7 +315,10 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
     ids = ids_table() if ids is None else ids
     takes = {r["key"]: r for r in jsonl(out / "takes.jsonl")}
     done = {r["id"] for f in ("records.jsonl", "rejects.jsonl") for r in jsonl(out / f)}
-    done_pids = {r["pid"] for r in takes.values()} if bench else set()
+    have = {}
+    for r in takes.values():
+        have.setdefault(r["pid"], set()).add(r["engine"])
+    done_pids = {p for p, e in have.items() if e >= set(engine.split(","))} if bench else set()
     todo, seen = [], set()
     for s in scripts:
         k = text_key(s)
@@ -351,8 +357,10 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
     for rid, s in todo:
         first = int(hashlib.sha256(f"engine {s['pid']}".encode()).hexdigest()[:8], 16)
         tried = []
-        for take in range(1, (1 if bench else max_takes) + 1):
-            eng = engines[(first + take - 1) % len(engines)]  # first take by hash; each retake moves to the next engine
+        # bench: take 1 of every engine; else the first take by hash, each retake on the next engine
+        plan = [(e, 1) for e in engines] if bench else [(engines[(first + t - 1) % len(engines)], t)
+                                                         for t in range(1, max_takes + 1)]
+        for eng, take in plan:
             E, service = ENGINES[eng], f"tts-{eng}"
             v = pick_voice(s, banks[eng])
             req = {"engine": eng, "model": E["model"], "rev": E["rev"], "voice": v["voice"], "ref": v["ref"],
@@ -383,7 +391,7 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
                 with open(out / "takes.jsonl", "a", encoding="utf-8") as f:
                     f.write(json.dumps(row, ensure_ascii=False) + "\n")
             if bench:
-                break
+                continue
             if row["verdict"] == "keep":
                 b24 = to24k(b)
                 dur = round(seconds(b24)[0], 3)
@@ -421,7 +429,8 @@ def report(scripts, dirs):
     """Markdown tables from takes.jsonl files (first takes only, so engines compare like round 1), one group per
     run directory (named after the engine), then by voice."""
     ents = {x["pid"]: [qa.canon(e) for e in x["entities"]] for x in scripts}
-    rows = [{**r, "engine": Path(d).name} for d in dirs for r in jsonl(Path(d) / "takes.jsonl") if r["take"] == 1]
+    rows = [{**r, "engine": f"{Path(d).name}/{r['engine']}"} for d in dirs for r in jsonl(Path(d) / "takes.jsonl")
+            if r["take"] == 1]
 
     def pct(a, b):
         return f"{100 * a / b:.1f}%" if b else "–"
