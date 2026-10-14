@@ -61,6 +61,15 @@ assert rec["sentences"][0]["en_text"] == "Four lakh rupees were debited from my 
 assert "en_alt" not in rec["sentences"][0] and rec["_qa"]["w6"]["alt_dropped"] == [0]
 assert not rec["translation_method"].endswith("+repair") and rec["_qa"]["w6"]["critical"] >= 1
 
+# 2b. arbitration: a judge "number" error where the parser finds every Hindi number is overruled; one where it doesn't stays
+his = ["एक लाख सत्तानवे हज़ार का बताया है।", "बयासी हज़ार से ऊपर नहीं।"]
+auto = [{"en": {}}, {"en": {"num_extra": [88000.0], "num_missing": [82000.0]}}]
+err = lambda span: {"code": "number", "field": "en", "en_span": span, "hi_span": "x", "fix": "y"}
+jud = [{"en": ["number"], "alt": [], "errors": [err("ninety-seven")], "dropped": 0},
+       {"en": ["number"], "alt": [], "errors": [err("eighty-eight")], "dropped": 0}]
+jud = tr.arbitrate(his, auto, jud)
+assert jud[0]["en"] == [] and jud[0]["overruled"] == 1 and jud[1]["en"] == ["number"] and jud[1]["overruled"] == 0
+
 # 3. parse: wrong segment count is a hard failure
 try:
     tr.parse('{"segments": [{"en": "a"}]}', 2)

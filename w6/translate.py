@@ -62,7 +62,10 @@ a self-correction rendered as its corrected meaning, numbers in words, lakh/cror
 Input: JSON {"segments": [{"i": 0, "hi": "...", "en": "...", "alt": "..."?}, ...]}; segments are consecutive parts of
 one recording, so use the neighbours for context.
 Report only real errors that change what a listener understands, or that break the style guide. A different but
-equally correct wording is not an error. Codes:
+equally correct wording is not an error. Also not errors: a unit or currency the context implies, made explicit
+("rupees" after an amount of money); a natural English word for अरे, तो, यार, भाई or जी, or leaving it out; a tense or
+word order that keeps the meaning; in a segment that corrects an earlier segment, an explicit correction ("Sorry, not
+Thursday, Friday."). Read Hindi numbers carefully before calling a number wrong. Codes:
 - meaning: mistranslated
 - omission: content of the Hindi missing (dropped fillers, repetitions and abandoned values are not omissions)
 - addition: content not in the Hindi
@@ -252,6 +255,21 @@ def judge(name, his, segs):
     return None, k
 
 
+NUM_FLAGS = {"num_extra", "num_missing", "num_corr", "unit"}
+
+
+def arbitrate(his, auto, jud):
+    """The number parser outranks the judge on values: a judge `number` error on a field whose Hindi numbers all appear
+    in it, with no extra one (no qa num/unit flag, at least one Hindi number), is overruled and counted."""
+    for h, a, v in zip(his, auto, jud or []):
+        ok = {f for f in a if qa.hi_numbers(h) and not NUM_FLAGS & set(a[f])}
+        keep = [e for e in v["errors"] if not (e["code"] == "number" and e.get("field", "en") in ok)]
+        v["overruled"], v["errors"] = len(v["errors"]) - len(keep), keep
+        for f in ("en", "alt"):
+            v[f] = sorted({e["code"] for e in keep if e.get("field", "en") == f})
+    return jud
+
+
 def critical(auto, jud):
     """Score to minimise over `en`: segments the judge marks critical + automatic critical/hard flags. A flagged `alt`
     is dropped instead (drop_bad_alts), so it never drives a repair."""
@@ -289,6 +307,7 @@ def process(rec, a):
     if segs is None:
         return None, {"id": rec["id"], "stage": "translate", "rule": "no_translation", "detail": auto}
     jud, jk = judge(a.judge, his, segs) if a.judge else (None, None)
+    jud = arbitrate(his, auto, jud)
     keys += [jk] * bool(jk)
     score, repaired = critical(auto, jud), False
     if a.engine != "it2" and not a.no_repair and score:
@@ -298,6 +317,7 @@ def process(rec, a):
         keys += k2
         if s2 is not None:
             j2, jk2 = judge(a.judge, his, s2) if a.judge else (None, None)
+            j2 = arbitrate(his, a2, j2)
             keys += [jk2] * bool(jk2)
             if critical(a2, j2) < score:
                 segs, auto, jud, score, repaired = s2, a2, j2, critical(a2, j2), True
