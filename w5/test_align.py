@@ -32,6 +32,8 @@ def main():
     ws = A.word_spans(spans, IDX["|"])
     assert [w[:2] for w in ws] == [(2, 3), (5, 9), (10, 11)]
     assert A.viterbi(emissions("-क-"), ["कक", "ख"], IDX) is None  # 3 tokens + 1 repeat need 5 frames: infeasible
+    rec = {"id": "rec-000002", "duration": 1.0, "source": {"synthetic": False}, "sentences": [{"hi_text": "कऍ ख।"}]}
+    assert A.align(rec, emissions("-क-|ख-"), torch.zeros(6), TOK, IDX) == (None, {"rule": "align_vocab", "detail": {"chars": ["ऍ"]}})
 
     # gap filling: silence 0-4, speech 5-24, silence 25-29, speech 30-39, silence 40-44
     db = torch.tensor([-60.0] * 5 + [-20.0] * 20 + [-60.0] * 5 + [-20.0] * 10 + [-60.0] * 5)
