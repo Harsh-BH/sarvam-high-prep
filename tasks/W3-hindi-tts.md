@@ -398,3 +398,36 @@ Same 60 W2 pilot scripts, same voice per script, take 1, QA as in the stage (rou
 | Compute | AWS SageMaker training jobs (PyTorch 2.9 DLC), S3 | — | — |
 
 No paid API and no LLM in round 2. **Label:** every round-2 record's audio comes from an NC-licensed model and clones speakers who never consented to cloning. That's fine for this private, non-commercial project, but these records must not go into anything released or commercial. W7: carry an `nc` flag per source (`source.model = k2-fsa/OmniVoice` identifies them).
+
+### Pilot: 500 W2 scripts on SageMaker (OmniVoice, 31 voices, up to 4 takes)
+
+Runs, all `uv run pipeline/run.py tts --in tts_in …` on the W2 pilot-v1 scripts (`stages/tts_in/20261014T120610Z-e91dd1d`):
+
+| Run | Instance | What | Billed |
+|---|---|---|---|
+| `20261014T130408Z-2161f95` | g4dn.2xlarge | omnivoice + pocket, forced pace, first bank. **Stopped** after 34 takes: first-take reject 5/6 per engine (pace and QA problems above) | 756 s |
+| `20261014T135249Z-b454356` | g4dn.2xlarge | first try of the final config. **Failed** at once on `archive/tts/rec-400051.wav already holds different audio` (the kept-audio key fix above) | 345 s |
+| `20261014T140334Z-d7219d7` | g4dn.2xlarge | **final config: renders all takes.** 469 records, 31 rejects, 665 takes, 0 violations | 8,831 s |
+| **`20261014T163810Z-ddf6f86`** | c5.xlarge (CPU) | **re-judge** of the same archived takes with the final QA equivalences (`--archive-only`; its checkpoint was seeded with the previous run's ASR hypotheses, so nothing was rendered or decoded). **484 records, 16 rejects, 0 violations. `tts` LATEST** | 420 s |
+
+**Result (`stages/tts/20261014T163810Z-ddf6f86`):**
+
+- **484 / 500 scripts kept (96.8%); 3.439 h of synthetic audio** (`validate.py --partial`: 484 records, 0 violations; the W2 estimate was 3.4 h). Clip length p10/p50/p90/max 15.9/24.6/36.6/54.3 s. 16 ids burned in `rejects.jsonl`.
+- Takes: 665 rendered (4.90 h of audio). On the final rules a kept script needed 1.22 takes on average; kept at take 1/2/3/4: 435/38/7/4.
+- **Voices: all 31 used** (13 f, 18 m), 6–30 records each (median 15). **Voice gender = script gender for 484/484.**
+- Pace: 0.100 s/char p50 (≈ 10 chars/s, close to IndicVoices conversation at 10.7).
+- Throughput on g4dn.2xlarge (T4, 8 vCPU): render 0.37 s and QA ASR 0.10 s per audio second, plus model loading. 2.4 h for the whole run.
+
+First takes (500), final QA rules:
+
+| Run | Takes | Audio h | CER ic p50/p90 | Entity hit | Number-entity hit | English-span hit | Agreed skip | Agreed insert | QA reject (r1 rules) | + 1 subst. | s/char p50 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| OmniVoice, W2 pilot | 500 | 3.59 | 0.018/0.036 | 98.8% | 99.4% | 99.3% | 2.0% | 0.6% | 10.6% | **13.0%** | 0.100 |
+
+- **By phenomenon** (first-take reject; scripts lost after 4 takes): digit strings 14% (7 of 258 lost), spelled acronyms 16% (7/185), lakh 12% (4/99), crore 20% (2/51), fractions 8% (4/131), dates 13% (1/103), times 14% (7/104), names 12% (11/290), self-corrections 12% (14/300), fillers 13% (8/251). The master's "budget re-renders for digits and acronyms" was right: they need the most retakes, but 4 takes keep 97% of them.
+- **The 16 lost scripts:**
+  - 12 fail every take on the same entity or English word. Rare proper nouns dominate: मेदांता (13 misses over all takes), ल्हाकपा (12), फ़ोर्टिस (5), उबर (4), also the clock form एट ओ वन. INFERRED: a consistent TTS mispronunciation or an ASR that doesn't know the name; ears would tell which.
+  - 2 always ran past 60 s: w2-00119 (440 chars) and w2-00453 (430 chars) with slow voices. The 55 s cap triggers from the reference's pace, and OmniVoice's own estimate came out longer.
+  - 2 have a repeated agreed substitution (तू→तो, कम्प्लेन→कंप्लेंट): ambiguous.
+- **QA equivalences found on this pilot** (both ASRs rewrite W2's spelling; INFERRED to be ASR spelling, not TTS errors): आइ→आई 38, है→हैं 12, भई→भाई 8, हैलो→हेलो, plus English ऐन/ऐड/ऐट → एन/एड/एट (folded in `qa.canon`). The re-judge recovered 15 scripts with them; 6 kept records switched to an earlier take.
+- **Cost:** 11,932 GPU-s on g4dn.2xlarge for the pilot runs ($1.035/h) = **$3.43**, plus the re-judge $0.02. **Per kept audio hour ≈ $1.0** (final run alone: $2.54 / 3.44 h = $0.74). No API spend.
