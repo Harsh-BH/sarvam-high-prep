@@ -49,16 +49,27 @@ def _once(key, body, s3):
         raise SystemExit(f"{key} exists with other bytes (an interrupted release?); pick a new tag")
 
 
+def _gate(what, lines, audio_dir, partial):
+    out, _ = validate.validate(lines, audio_dir, partial)
+    for n, rid, rule, msg in out:
+        print(f"{what}: {rid} {rule}: {msg}", file=sys.stderr)
+    if out:
+        raise SystemExit(f"{what}: validate.py found {len(out)} violations; nothing released")
+
+
 def snapshot(tag, stage_files, audio_dir, *, partial, s3=None):
     if store.exists(f"release/{tag}/manifest.jsonl", s3):
         raise SystemExit(f"release/{tag} exists; releases are frozen, pick a new tag")
+    for p in stage_files:  # each file on its own: merge() and serialise() would hide duplicate ids and unknown keys
+        _gate(p, Path(p).read_text(encoding="utf-8").split("\n"), audio_dir, True)
     recs = merge(stage_files)
+    if missing := [r["id"] for r in recs if "audio" not in r]:
+        raise SystemExit(f"{len(missing)} records have no audio (text for ids outside the release?): {missing[:5]}")
     body = "".join(serialise(r) + "\n" for r in recs)
-    out, _ = validate.validate(body.split("\n"), audio_dir, partial)
-    for n, rid, rule, msg in out:
-        print(f"{rid} {rule}: {msg}", file=sys.stderr)
-    if out:
-        raise SystemExit(f"validate.py: {len(out)} violations; nothing released")
+    _gate(f"release/{tag}", body.split("\n"), audio_dir, partial)
+    planned = {f"release/{tag}/{x}" for x in ["provenance.jsonl", "manifest.jsonl"] + [f"audio/{r['id']}.wav" for r in recs]}
+    if stale := sorted(set(store.keys(f"release/{tag}/", s3)) - planned):
+        raise SystemExit(f"release/{tag} holds {len(stale)} objects this release wouldn't list: {stale[:5]}; pick a new tag")
     for r in recs:
         _once(f"release/{tag}/audio/{r['id']}.wav", (Path(audio_dir) / r["audio"]).read_bytes(), s3)
     # ponytail: local stage-file paths until stages run through run.py (Task 10)

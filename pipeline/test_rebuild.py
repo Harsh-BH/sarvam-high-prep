@@ -59,6 +59,23 @@ def main():
     except SystemExit:
         pass
     assert "release/t3/manifest.jsonl" not in f.objects
+    (d / "typo.jsonl").write_text(json.dumps(dict(b, speakerid="spk-y"), ensure_ascii=False) + "\n")
+    (d / "dup.jsonl").write_text((json.dumps(b, ensure_ascii=False) + "\n") * 2)
+    (d / "textonly.jsonl").write_text(json.dumps(dict(b, id="rec-000002"), ensure_ascii=False) + "\n")
+    for tag, extra in (("t4", "typo"), ("t5", "dup"), ("t6", "textonly")):
+        try:  # unknown key / duplicate id in one stage file / a record with no audio: refused before any write
+            release.snapshot(tag, [d / "a.jsonl", d / f"{extra}.jsonl"], d, partial=True, s3=f)
+            raise AssertionError(f"{extra} released")
+        except SystemExit:
+            pass
+        assert not [k for k in f.objects if k.startswith(f"release/{tag}/")], extra
+    f.objects["release/t7/audio/rec-000099.wav"] = b"RIFF-left-by-a-crashed-run"
+    try:  # an object the new manifest wouldn't list must not sit in the frozen snapshot
+        release.snapshot("t7", [d / "a.jsonl", d / "b.jsonl"], d, partial=True, s3=f)
+        raise AssertionError("leftover object under release/t7/ not refused")
+    except SystemExit:
+        pass
+    assert "release/t7/manifest.jsonl" not in f.objects
     print("ok: rebuild")
 
 
