@@ -32,7 +32,7 @@ _common = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--path-format=ab
                          capture_output=True, text=True).stdout.strip()
 DATA = (Path(_common).parent if _common else ROOT) / "data/w2"  # data lives in the main checkout, not the worktree
 
-PROMPT_V = "w2-v1"
+PROMPT_V = "w2-v3"
 MODELS = {  # name -> (Bedrock model id, USD per 1K input tokens, per 1K output; ap-south-1 on-demand, Pricing API 2026-10-14)
     "qwen3-235b": ("qwen.qwen3-235b-a22b-2507-v1:0", 0.00026, 0.00104),
     "gpt-oss-120b": ("openai.gpt-oss-120b-1:0", 0.00018, 0.00071),
@@ -58,18 +58,18 @@ NUMFORM_W = {  # P(primary number form | domain), %
     "everyday":  [10, 25, 15, 10, 5, 10, 5, 15, 5],
 }
 INTENTS = {  # key: (target %, instruction). Detectable ones are checked in the output (DETECT)
-    "neg_place": (10, "Use negation in at least two different places in the sentence structure, e.g. 'मैंने पैसे नहीं भेजे' and 'वो आया ही नहीं'."),
+    "neg_place": (10, "Use negation (नहीं, न) at least twice, in different positions, e.g. before the verb in one clause and after it with ही in another."),
     "tag_na": (10, "End a sentence with the tag 'ना' that is NOT a negation, e.g. 'आप आज कर देंगे ना?'."),
-    "nahi_to": (7, "Use 'नहीं तो' meaning 'otherwise', e.g. 'आज ही कर दीजिए, नहीं तो मेरा चेक बाउंस हो जाएगा'."),
-    "mat": (8, "Use the negative imperative 'मत', e.g. 'किसी को ओ टी पी मत बताना'."),
+    "nahi_to": (7, "Use 'नहीं तो' meaning 'otherwise' (do X, नहीं तो Y will happen)."),
+    "mat": (8, "Use the negative imperative 'मत' (मत करना, मत भेजिए)."),
     "cond": (10, "Use a condition with 'अगर ... तो' and/or 'वरना'."),
-    "intonation_q": (9, "Ask at least one yes/no question with NO question word at all (no क्या), only intonation, ending with '?', e.g. 'पैसा वापस आ जाएगा?'."),
-    "refusal": (8, "The speaker clearly refuses something (an offer, a request or a charge), e.g. 'नहीं, मुझे वो कार्ड नहीं चाहिए'."),
-    "confirmation": (8, "The speaker explicitly confirms something, e.g. 'हाँ, बिल्कुल, यही नंबर सही है'."),
-    "causative": (9, "Contrast doing something yourself with getting it done by someone: 'किया' vs 'करवाया', e.g. 'मैंने खुद नहीं किया, भाई से करवाया'."),
-    "kal_parson": (8, "Use 'कल' or 'परसों' where only the verb tense tells past from future, e.g. 'कल पैसे भेजे थे' and 'परसों फिर आऊँगी'."),
-    "prodrop": (6, "Drop the subject pronoun in several clauses where context makes it clear, e.g. 'सुबह गई थी, फिर वापस आ गई'."),
-    "ne_ko": (7, "Make clear who did what to whom with ने/को, including a role that is easy to get backwards, e.g. 'उसने मुझको पैसे भेजे, मैंने उसको नहीं'."),
+    "intonation_q": (9, "Ask at least one yes/no question with NO question word at all (not even क्या), marked only by intonation and ending with '?'."),
+    "refusal": (8, "The speaker clearly refuses something that fits the situation: an offer, a request or a charge."),
+    "confirmation": (8, "The speaker explicitly confirms something that fits the situation (a detail, a booking, a request)."),
+    "causative": (9, "Contrast doing something yourself with getting it done by someone else, with a causative verb (करवाया, भिजवाया, बनवाया, लगवाया)."),
+    "kal_parson": (8, "Use 'कल' or 'परसों' where only the verb tense tells whether it means the past or the future."),
+    "prodrop": (6, "Drop the subject pronoun in several clauses where context makes it clear."),
+    "ne_ko": (7, "Make clear who did what to whom with ने and को, including one role that a listener could easily get backwards."),
 }
 CORR_W = {"none": 40, "entity": 45, "other": 15}
 MARKERS = ["नहीं नहीं", "मतलब", "{सॉरी|sorry}", "{आई मीन|I mean}", "एक मिनट"]
@@ -78,6 +78,7 @@ MIX = {"light": (30, "light: 1 to 3 English words"),
        "heavy": (20, "heavy: 9 or more English words, including at least one whole English phrase or clause such as {इट्स नॉट वर्किंग|it's not working}")}
 LENGTH = {"short": (30, (30, 50)), "medium": (50, (55, 95)), "long": (20, (105, 140))}  # words
 GENDER_W = {"f": 50, "m": 50}
+DISFL_W = {"filler": {"yes": 50, "no": 50}, "repeat": {"yes": 30, "no": 70}}  # IV: 1.34 fillers, 0.53 repeats per 100 words
 N_NAMED = {"short": 1, "medium": 2, "long": 3}
 SCENARIOS = {
     "banking": ["money debited without the speaker doing any transaction", "debit card lost, wants it blocked", "loan EMI amount or date query", "wants to break or renew a fixed deposit", "a cheque bounced", "KYC update pending and the account is frozen", "transferred money to a wrong account", "ATM did not give cash but the account was debited", "credit card bill has a charge they never made", "closing an old account", "adding a nominee", "home loan disbursement delayed"],
@@ -99,7 +100,9 @@ AGES = ["about 22", "about 35", "about 50", "about 65"]
 SYSTEM = nfc("""You write short monologues in spoken Hindi with natural English code-mixing, as one real Indian speaker says them out loud: on a phone call, in a voice note, or talking to someone. A Hindi TTS will read them and they become speech-translation training data, so every word must be speakable and written exactly as it is spoken.
 
 How it must sound:
-- Colloquial spoken Hindi, not written or formal Hindi. Short clauses, natural restarts and repeated words (मैं मैं, वो वो), discourse words like मतलब, यानी, अच्छा, देखिए, हाँ, तो, बस, and at most two fillers, only उम्म or हम्म. Never use the fillers अ, अं or ए.
+- Colloquial spoken Hindi, not written or formal Hindi, in short clauses. Use discourse words (मतलब, यानी, अच्छा, देखिए, यार) sparingly, one or two at most.
+- Fillers and repetitions only where the request asks for them. The only fillers are उम्म and हम्म; never अ, अं or ए.
+- Make the story fit the given entities: if an amount, date or name looks unusual for the situation, adjust the situation so it is plausible.
 - No bookish words such as एवं, तथा, हेतु, अतः, उक्त, किंतु, परंतु, यदि.
 - Only this one speaker talks: no other voice, no dialogue labels, no stage directions, no narration.
 - Vary the opening; do not start with नमस्ते मेरा नाम.
@@ -107,7 +110,7 @@ How it must sound:
 Writing rules (strict):
 - Devanagari only. No digits. No Latin letters except inside the markup below. No symbols at all (no ₹ % / - : . " ' … or brackets other than the markup).
 - Numbers are written as the spoken words.
-- Every English word or phrase, including everyday loanwords, is written in Devanagari as an Indian speaker pronounces it and wrapped as {देवनागरी|latin}, e.g. {कस्टमर केयर|customer care}, {रिफ़ंड|refund}, {फ़ोन|phone}, {बैंक|bank}.
+- Every English word or phrase, including everyday loanwords and acronyms, is written in Devanagari as an Indian speaker pronounces it and wrapped as {देवनागरी|latin}, e.g. {कस्टमर केयर|customer care}, {रिफ़ंड|refund}, {फ़ोन|phone}, {बैंक|bank}, {अकाउंट|account}, {टाइम|time}, {ओ टी पी|OTP}. Never leave an English word unwrapped, and never write Latin outside the braces.
 - Wrap every entity as [text|type], type one of: name place org product amount number date time phone account id. Copy the entities you are given exactly, character for character, including the {..|..} inside them.
 - Punctuation: commas for short pauses; every sentence ends with । or ? or !. Nothing else.
 - Spelling: anusvara before a consonant (हिंदी, बंद), chandrabindu for a nasal vowel when no matra rises above the line (हाँ, पाँच), nukta only for z and f sounds (ज़रूरत, फ़ोन).
@@ -161,6 +164,7 @@ def design(n, seed):
     marks = iter(quota(sum(c != "none" for c in corr), dict.fromkeys(MARKERS, 1), r))
     cols = {"intent": quota(n, {k: v[0] for k, v in INTENTS.items()}, r), "mix": quota(n, {k: v[0] for k, v in MIX.items()}, r),
             "length": quota(n, {k: v[0] for k, v in LENGTH.items()}, r), "gender": quota(n, GENDER_W, r)}
+    cols.update({k: quota(n, w, r) for k, w in DISFL_W.items()})  # drawn last, so earlier columns keep their values
     return [{"domain": doms[i], "numform": forms[i], "corr": corr[i], "marker": next(marks) if corr[i] != "none" else None,
              **{k: v[i] for k, v in cols.items()}} for i in range(n)]
 
@@ -227,6 +231,9 @@ def user_prompt(s):
     else:
         lines.append("Self-correction: none.")
     lines.append(f"Also: {INTENTS[c['intent']][1]}")
+    d = [x for k, x in (("filler", "say the filler उम्म or हम्म once, where the speaker hesitates"),
+                        ("repeat", "repeat one word or restart once, as people do (मैं मैं, वो वो)")) if c.get(k) == "yes"]
+    lines.append("Disfluency: " + ("; ".join(d) if d else "none, no fillers") + ".")
     return nfc("\n".join(lines))
 
 
@@ -301,6 +308,21 @@ def detect(sentences):
     return out
 
 
+def wrap_missing(marked, e):
+    """The LLM spoke a given entity verbatim but forgot its [..|type] wrapper: wrap the first occurrence that sits
+    outside every entity span. Exact text only, so the value stays known."""
+    i = marked.find(e.text)
+    while i >= 0:
+        if marked.count("[", 0, i) == marked.count("]", 0, i):
+            return f"{marked[:i]}[{e.text}|{e.type}]{marked[i + len(e.text):]}"
+        i = marked.find(e.text, i + 1)
+    return marked
+
+
+def repeats(toks):
+    return any(a == b and a not in banks.NUMWORDS for a, b in zip(toks, toks[1:]))
+
+
 def gender_marks(toks):
     m = f = 0
     for a, b in zip(toks, toks[1:]):
@@ -341,6 +363,12 @@ def check(sp, raw, pid):
     if not m:
         return None, ["format"]
     marked = nfc(" ".join(m.group(1).split()))
+    wrapped = []
+    for e in [e for e, _ in sp["ents"]] + ([sp["corr"]["wrong"]] if sp["corr"] and "wrong" in sp["corr"] else []):
+        if dev(e.text) not in [dev(x) for x, _ in TYPED.findall(marked)]:
+            marked2 = wrap_missing(marked, e)
+            wrapped += [dev(e.text)] if marked2 != marked else []
+            marked = marked2
     typed = TYPED.findall(marked)
     plain = TYPED.sub(r"[\1]", marked)
     try:
@@ -388,7 +416,9 @@ def check(sp, raw, pid):
     item["detected"] = sorted(detect(item["sentences"]))
     if c["intent"] in DETECT and c["intent"] not in item["detected"]:
         fails.append("intent")
-    item.update(gender=c["gender"], marked=plain, est_sec=round(est, 1), words=len(toks), entity_spans=spans, cell=c,
+    if (c.get("filler") == "yes" and not FILLERS & set(toks)) or (c.get("repeat") == "yes" and not repeats(toks)):
+        fails.append("disfluency")
+    item.update(gender=c["gender"], marked=plain, autowrapped=wrapped, est_sec=round(est, 1), words=len(toks), entity_spans=spans, cell=c,
                 gender_marks=[mm, ff], scenario=sp["scenario"], setting=sp["setting"])
     item["tags"] = realised_tags(item, spans)
     return item, fails
@@ -412,7 +442,7 @@ def generate(name, cell, pid, seed, takes):
     return rec
 
 
-def run(name, cells, prefix, seed, takes, workers=6):
+def run(name, cells, prefix, seed, takes, workers=8):
     with ThreadPoolExecutor(workers) as ex:
         futs = [ex.submit(generate, name, c, f"{prefix}{i + 1:05d}", seed, takes) for i, c in enumerate(cells)]
         out = []
@@ -436,13 +466,13 @@ def main():
     ap.add_argument("--n", type=int)
     ap.add_argument("--models", default=",".join(MODELS))
     ap.add_argument("--model")
-    ap.add_argument("--takes", type=int, default=3)
+    ap.add_argument("--takes", type=int, default=5)
     a = ap.parse_args()
     if a.mode == "bake":
         cells = design(a.n or 30, "bake-v1")
         for name in a.models.split(","):
             recs = run(name, cells, "b-", "bake-v1", takes=1)
-            write(DATA / f"bake/{name}.jsonl", recs)
+            write(DATA / f"bake/{name}-{PROMPT_V}.jsonl", recs)
             print(name, Counter(f for r in recs for f in r["fails"] or ["ok"]), file=sys.stderr)
     else:
         recs = run(a.model, design(a.n or 500, "pilot-v1"), "w2-", "pilot-v1", takes=a.takes)
@@ -467,4 +497,8 @@ if __name__ == "__main__":
     assert [x["retracted"] for x in shot_item["entity_spans"]] == [False, False, True, False]
     assert detect(["आप आएँगे ना?", "पैसा आ जाएगा?", "मैंने भाई से करवाया।"]) >= {"tag_na", "intonation_q", "causative"}
     assert gender_marks("मैं बोल रही हूँ और कल आऊँगी".split()) == (0, 2)
+    assert wrap_missing("मैं {क्रोमा|Croma} से [{क्रोमा|Croma} स्टोर|org]", Ent("{क्रोमा|Croma}", "org", "Croma", "org")) == \
+        "मैं [{क्रोमा|Croma}|org] से [{क्रोमा|Croma} स्टोर|org]"
+    assert wrap_missing("[{क्रोमा|Croma} स्टोर|org]", Ent("{क्रोमा|Croma}", "org", "Croma", "org")) == "[{क्रोमा|Croma} स्टोर|org]"
+    assert repeats("मैं मैं गया".split()) and not repeats("नौ नौ".split())
     main()

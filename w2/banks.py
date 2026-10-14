@@ -37,6 +37,7 @@ EN_TENS = nfc("ट्वेंटी थर्टी फ़ोर्टी फ�
 EN_TENSL = "twenty thirty forty fifty sixty seventy eighty ninety".split()
 LETTERS = nfc("ए बी सी डी ई एफ जी एच आई जे के एल एम एन ओ पी क्यू आर एस टी यू वी डब्ल्यू एक्स वाई ज़ेड").split()  # SPEC R8
 FRAC = nfc("डेढ़ ढाई सवा साढ़े पौने").split()
+NUMWORDS = set(H) | set(EN_D) | set(LETTERS) | {"डबल", "ट्रिपल"}  # digit-string tokens: a repeat here is not a disfluency
 UNITS = [(10**7, nfc("करोड़")), (10**5, "लाख"), (1000, nfc("हज़ार")), (100, "सौ")]
 RUPEES = "रुपये"
 MONTHS = list(zip(nfc("जनवरी फ़रवरी मार्च अप्रैल मई जून जुलाई अगस्त सितंबर अक्टूबर नवंबर दिसंबर").split(),
@@ -148,9 +149,9 @@ def g_lakh_crore(r, dom, lang="hi"):
     elif c < 0.65:
         v = r.randint(1, 99) * 10**5 + r.randint(1, 99) * 1000
     elif c < 0.85:
-        v = r.randint(1, 25) * 10**7
+        v = r.randint(1, 10) * 10**7
     else:
-        v = r.randint(1, 15) * 10**7 + r.randint(1, 99) * 10**5
+        v = r.randint(1, 5) * 10**7 + r.randint(1, 99) * 10**5
     return Ent(hi(v) + (f" {RUPEES}" if r.random() < 0.6 else ""), "amount", str(v), "lakh_crore")
 
 
