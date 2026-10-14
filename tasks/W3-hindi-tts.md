@@ -311,3 +311,199 @@ No new organiser questions; W0's list covers the PS ambiguities this touches.
   - Pinned engine revisions are in the engine table above.
 - **W1/W4:** vakyansh truncates whole clips longer than ~10 s. Decode in ≤ 7 s chunks cut at the quietest frame (`w3/qa.py:asr_w2v`). `w1/asr_check.py` decodes whole clips.
 - **W8b:** Bulbul v3 at temperature 0.3 was more faithful than 0.6 on Hindi (12 pairs). Worth the same test on English `shubh` targets.
+
+## Round 2, 2026-10-14: open engines at scale
+
+**Context change (Harsh, 2026-10-14; CLAUDE.md):** personal learning project. Engines must be open-source or free; Bulbul is out (no credits, not open). Non-commercial (NC) licences are acceptable here and are labelled **NC** below. GPU work runs on SageMaker.
+
+### Open Hindi TTS survey (2026-10-14)
+
+Sources: HF cards and API metadata, GitHub, PyPI, read 2026-10-14 (S = the source's own claim). "Job-runnable" = ungated, because a SageMaker job gets no HF token (W4's IndicConformer needed an S3 mirror for that reason).
+
+| Engine | Hindi voices | Weights / code licence | Gated | Size | Ran? |
+|---|---|---|---|---|---|
+| **OmniVoice** (k2-fsa, 2026-03) | zero-shot cloning, 3–10 s reference + transcript; 117 h Hindi in 581k h (S) | **CC BY-NC (NC)** (card; no HF tag) / Apache-2.0 | no | 3.3 GB | **yes, SageMaker** |
+| **pocket-tts-hindi** (Saryps Labs, 2026-09) | cloning from a reference clip; 932 h IndicVoices + Kathbath (S) | CC BY 4.0 / MIT (pocket-tts runtime) | no | 0.22 GB | **yes, laptop CPU** |
+| VoxCPM2 (OpenBMB) | cloning or text-described voices; 30 languages incl. Hindi (S); MiniMax Hindi WER 19.7 vs internal CER 0.79% (S, contradictory) | Apache-2.0 | no | 5.0 GB, bf16 | queued (no g6/g5 capacity) |
+| Magpie 357M (NVIDIA) | 5 fixed English-speaker voices; no cloning (S) | NVIDIA Open Model License | no | 0.6 GB | round 1 |
+| Indic Parler-TTS | 4 named Hindi speakers; unnamed descriptions give random voices (S) | Apache-2.0 | **yes** (not job-runnable) | 3.75 GB | round 1 (40% reject) |
+| IndicF5 (AI4Bharat) | cloning; last of 7 in SpeechArena (Elo 805.8, S) | MIT weights, code has no licence | **yes, access not granted** (HTTP 403, 2026-10-14) | 1.4 GB | no |
+| SPRING_F5 / F5-Hindi-24KHz (IIT Madras) | F5 cloning | Apache-2.0 tag, code no licence / CC BY 4.0 (fork) | no | 5.4 / 0.6 GB | no: no published Hindi numbers, F5 family ranks last in SpeechArena |
+| Chatterbox Multilingual + `-hi` finetune (Resemble AI) | cloning | MIT; outputs carry Resemble's Perth watermark | no | 3.2 GB | no: package pins torch 2.6 (image has 2.9); the `-hi` loader exists only as modified code inside its demo Space |
+| XTTS-v2 (coqui-tts) | cloning | CPML (**NC, outputs too**) / MPL-2.0 | no | 2.1 GB | no: older, superseded by OmniVoice in the same licence class |
+| Indic-Speak, Veena, Kokoro, Piper, svara, Orpheus-hi | ≤ 5 fixed Hindi voices, or Llama-3.2 bases | various | mixed | 0.3–13 GB | no: "many voices" is the goal |
+| Sooktam-2 (BharatGen), Higgs TTS 3, Fish S2 | cloning | research / NC licences | no | 6.7–11 GB | no: bigger, no Hindi numbers |
+| Qwen3-TTS, CosyVoice 3, IndexTTS-2, kyutai pocket-tts (base) | — | — | — | — | no Hindi |
+
+### Voices: 31 cloned IndicVoices speakers
+
+- `w3/voices.py` picks one 6–11 s segment per speaker from the IndicVoices Hindi files W1 already holds: non-conversation (wideband) recordings with an excellent/good verification report, no noise, echo, chatter or volume flags, a tag-free verbatim text, and a pace of 8–14 transcript chars per second of speech (why: below). It keeps the cleanest such segment per speaker (SNR, as `pipeline/audio_qc.py` measures it), cut to 24 kHz with the pinned ffmpeg, then the 20 cleanest speakers per gender.
+- **31 voices (13 f, 18 m)** qualify; reference pace 8.0–13.0 chars/s, median 9.3. Each clip is stored write-once at `raw/_voices/iv-<speaker>-<sha8>.wav` with a sidecar (source file and offsets, transcript, speaker metadata, sha256, licence CC BY 4.0, attribution AI4Bharat IndicVoices). `w3/voices.tsv` is the bank; a script gets a voice of its own `gender` by a stable hash of its `pid` (≈ 19 female or 14 male scripts per voice in the pilot). The first bank (40 voices without the pace filter, `raw/_voices/iv-<speaker>.wav`) stays archived because the benches used it.
+- **Consent caveat (ethics):** these speakers consented to IndicVoices' collection for speech technology under CC BY 4.0, which permits reuse of the recordings. They did **not** explicitly consent to having their voices cloned. This is acceptable only for this private, non-commercial learning project. Never publish the synthetic audio, and never present it as the speaker. Before any release, replace these references with voices whose owners consented to cloning (e.g. Harsh's own voice, or TTS-corpus voice artists such as Rasa or SYSPIN, whose recordings were made for TTS).
+- **Speaking rate (measured):** real IndicVoices *conversation* runs at 10.7 transcript chars per second of speech (p25–p75 9.3–12.4; 167 W1 pool clips); extempore 9.7, read speech 7.3. The first bank's references were read/extempore speech at a median of 7.8 (range 4.0–13.0), and a cloned voice speaks at its reference's pace: the first OmniVoice render of p001 took 34 s where other engines took 14–19 s.
+  - **Forcing a conversational duration made OmniVoice drop words** (paired bench below): agreed skips 23% → 0%, QA reject 41.7% → 25.0% once the duration was left to the model.
+  - So the bank keeps only references whose own pace is 8–14 chars/s, and OmniVoice keeps its own pace. The stage sets a duration (55 s) only when a script at the reference's pace would run past it: the clip limit is 60 s (§3A), and the slow first bank produced 2 takes over 60 s out of 60.
+
+### The `tts` stage (`w3/tts.py`; self-check `w3/test_tts.py`)
+
+- **Contract:** `--in SCRIPTS.jsonl --audio-dir DIR --out OUT`, registered in `pipeline/run.py` STAGES as `tts` (and `tts_bench` = `w3/tts_bench.py`, its `--bench` mode, so a benchmark never moves the `tts` LATEST). Input = W2 scripts uploaded as a stage run (`tts.py upload SCRIPTS STAGE`: `stages/tts_in/<run>/`, no audio). It runs locally under the GPU flock and on SageMaker through `run.py --sm` (verified: smoke and benches below).
+- **Ids:** `tts.py alloc` appends one id per script text (`txt:<sha256(tts_dev)[:16]>`) to `w3/ids.tsv` **before** any run; the job only reads them. W2 pilot-v1 (500 scripts, sha256 `e6b51167…`) holds `rec-400050`–`rec-400549`. A script that fails every take burns its id into `rejects.jsonl` (rule `qa`, every take's reasons).
+- **Per script:** a voice of the script's gender (stable hash of `pid`); take *t* = seed *t*; with several `--engine`s the first take goes to one by a stable hash and each retake moves to the next engine. Every take goes through `pipeline/archive.archive_call` (service `tts-<engine>`, key = sha256 of engine, model, pinned revision, voice, reference key, text, seed, take, engine options), so every take, kept or rejected, is archived write-once at `archive/api/tts-<engine>/<key>.bin|.json`, and a re-run never re-renders (verified by the self-check's crash/resume case).
+- **QA per take:** vakyansh CTC (GPU, ≤ 7 s quiet chunks) + IndicConformer RNNT (CPU ONNX; weights from W4's S3 mirror inside a job) → `qa.measure` + `qa.rules` (the round-1 thresholds) + "one agreed substitution → retake" (round 1 sent those to a human; §3.3 says drop, don't review). Hypotheses are cached per take key in `OUT/asr/`, so a resumed run never re-decodes.
+- **Kept take → record:** `OUT/audio/<id>.wav` (24 kHz s16; soxr with the pinned ffmpeg if the engine isn't 24 kHz), and the same bytes write-once at `archive/tts/<id>-<take key[:16]>.wav` + `.meta.json` (sha256, the raw take's archive key, request). `_archive.tts` points there, so `pipeline/rebuild.py` copies, never re-synthesises. The key names the take because a re-run with other settings may keep another take for the same id. The first version used `archive/tts/<id>.wav`, and the second pilot run died on that collision. Orphans from the two abandoned pilot runs (`archive/tts/rec-4000{50,51,52,54,55,56,58,59,60,62}.wav`) are referenced by no record. `source = {corpus: "w2-scripts-v1", source_file: "tts/<id>.wav", start: 0, end: duration, synthetic: true, model, voice}`; `speaker_id = spk-tts-<model>-<voice>`; `sentences[].hi_text` = the script's transcript (what QA says was said); `_w2` = the script minus `_gen` (W6 needs `entity_spans` and `corrections`); `_w3` = engine, revision, take, raw-take key, rejected takes; `_qa.tts` = CER per ASR, spans, pace, pauses.
+- `OUT/takes.jsonl`: one QA row per take (render and ASR seconds included). `tts.py report SCRIPTS DIR...` turns it into the tables below; `tts.py listen RUN OUT` builds the listening list.
+
+### Bench on the probe set (100 items, first take, same QA as round 1)
+
+| Engine / run | Takes | Audio h | CER ic p50/p90 | Entity hit | Number-entity hit | English-span hit | Agreed skip | Agreed insert | QA reject (r1 rules) | + 1 subst. | s/char p50 | Wall s per audio s |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| Bulbul v3 (round 1) | 72 | 0.26 | 0.016/0.048 | 96.6% | 95.3% | 98.9% | 4.2% | 0.0% | 18.1% | – | 0.091 | 0.28 (API) |
+| Magpie 357M (round 1) | 100 | 0.33 | 0.010/0.027 | 98.6% | 98.2% | 99.2% | 1.0% | 7.0% | 11.0% | – | 0.095 | 0.78 |
+| Indic Parler (round 1) | 100 | 0.34 | 0.020/0.077 | 94.1% | 92.7% | 97.1% | 7.0% | 5.0% | 40.0% | – | 0.095 | 1.29 |
+| **OmniVoice**, 31 cloned voices, own pace (final config; SageMaker T4) | 100 | 0.37 | **0.010/0.036** | **98.6%** | **98.6%** | **99.2%** | 2.0% | 0.0% | **11.0%** | 11.0% | 0.105 | 0.38 + 0.17 ASR |
+| **pocket-tts-hindi**, 40 cloned voices (laptop CPU) | 100 | 0.32 | 0.017/0.049 | 96.4% | 96.4% | 97.1% | 5.0% | 1.0% | **21.0%** | 22.0% | 0.089 | 0.31 (render only, CPU) |
+| pocket, sentence/comma chunks (rejected variant) | 100 | 0.39 | 0.017/0.052 | 97.2% | 95.9% | 97.7% | 8.0% | 0.0% | 19.0% | 21.0% | 0.111 | 0.27 |
+
+- **OmniVoice** ties Magpie's 11% (round 1's best), with the best number-entity, English-span and CER p90 of any engine except Magpie, and with Indian voices instead of 5 English ones. By phenomenon (rejects/n): digit strings 3/31, acronyms 3/16, lakh 2/17, fractions 2/16, dates 1/16, times 1/13, names 4/32, self-corrections 2/19, fillers 2/17.
+- Caveat: rows are judged by the QA of their day. Round 1 used the round-1 rules; pocket's run predates `qa.SAME` and the ऐ fold, which could only lower its rejects (the round-1 renders changed 2/382 verdicts).
+- **Pocket** is on a par with round-1 Bulbul and clearly better than Parler, with 40 Indian voices instead of 4–12. By phenomenon (rejects/n): digit strings 6/31, spelled acronyms 2/16 (Magpie: 37.5%), lakh 4/17, fractions 4/16, dates 1/16, times 2/13, self-corrections 5/19, fillers 3/17, **names 11/32: its weakest**.
+- **Chunking didn't help pocket.** Its own splitter only breaks at `. ! ?` and warns that a chunk over 50 tokens "may skip words"; with the punctuation stripped (card: trained without it), every script is one chunk. Rendering one sentence (long ones cut at commas) per call with 0.3 s gaps gave 19% vs 21% reject and 8 vs 5 agreed skips, i.e. no difference at n = 100, and a slower pace. Reverted; the simpler whole-text render stays.
+
+### OmniVoice on W2 scripts: forced pace vs its own pace (paired, 60 scripts, first bank)
+
+Same 60 W2 pilot scripts, same voice per script, take 1, QA as in the stage (round-1 rules + one agreed substitution).
+
+| Variant | Takes | Audio h | CER ic p50/p90 | Entity hit | Number-entity hit | English-span hit | Agreed skip | Agreed insert | QA reject (r1 rules) | + 1 subst. | s/char p50 | Wall s per audio s (T4) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| duration forced to a conversational pace | 60 | 0.36 | 0.021/0.122 | 90.9% | 91.9% | 92.5% | 23.3% | 6.7% | 38.3% | 41.7% | 0.093 | 0.36 + 0.12 ASR |
+| **own pace (the reference's)** | 60 | 0.50 | **0.016/0.037** | **96.3%** | **96.7%** | **98.7%** | **0.0%** | 1.7% | **21.7%** | **25.0%** | 0.120 | 0.34 + 0.09 ASR |
+
+- Paired verdicts: keep/keep 30, **reject→keep 15**, keep→reject 5, reject/reject 10 (sign test on the 20 discordant pairs: p ≈ 0.04).
+- Own pace is slower (0.120 s/char ≈ 8.3 chars/s, between IndicVoices read and extempore) because the first bank's references were slow. 2 of 60 takes ran past 60 s (66.1 s max). The rebuilt bank (references at 8–14 chars/s) and the 55 s cap address both; the pilot below measures the result.
+- W2 scripts are harder than the probe: 24 s and ~70 words each, with disfluencies, repeated words and English clauses. Even the better variant rejects 25% of first takes, versus 11–21% for round-1 engines on the shorter probe items.
+- On the same W2 scripts in the abandoned first pilot run, pocket's IndicConformer CER p50 was 0.074 vs OmniVoice's 0.025 (17 takes each), so the pilot runs OmniVoice only. Pocket stays available as a second engine (`--engine omnivoice,pocket`: retakes rotate engines) for acoustic variety in a bulk run.
+
+### QA on W2 scripts: two corrections
+
+- **ASR normalisation of colloquial forms looked like TTS substitutions.** On the first pilot takes, both ASRs agreed on these single-word "substitutions": ये→यह 5, पे→पर 5, मे→में 4, न→ना 1, ऐप→एप 1. A TTS reading पे does not say पर; both ASRs' language models standardise it. With "one agreed substitution → retake", such a script would fail every take and be lost, a bias *against* colloquial Hindi. `qa.SAME` now treats these pairs as one word, like same-value number spellings. On round 1's 382 renders it changes 0 verdicts.
+- The remaining agreed substitutions look like real TTS errors (प्यूमा→पीमा, मृणाल→निराल, शेड→सेट), and agreed skips are mostly digits inside digit strings plus short function words (है, मैं, का). INFERRED: TTS drops, since both ASRs agree and they heard repeated words fine elsewhere. Those rules stay.
+
+### Declarations, round 2 (§10 R2)
+
+| Used for | Model / tool | Revision | Licence |
+|---|---|---|---|
+| **Pilot TTS (record audio)** | OmniVoice, `k2-fsa/OmniVoice`; `omnivoice` 0.2.1 (PyPI) | `c5fdb5ccb189668d56333f77ba2629f4cd7535f4` | weights **CC BY-NC (NC)** per the card (no HF tag), training data incl. Emilia; code Apache-2.0 |
+| Bench TTS | pocket-tts-hindi, `saryps-labs/pocket-tts-hindi`; `pocket-tts` 3.3.0 | `6bff9c1e776bb90c68dd05c2467c62d1ecdf1b51` | CC BY 4.0; runtime MIT |
+| Voice references (cloned) | IndicVoices Hindi (AI4Bharat), 31 + 40 speakers | W1's local copies, offsets in each `raw/_voices/*.meta.json` | CC BY 4.0. **Consent caveat above** |
+| QA ASR 1 | IndicConformer 600M multilingual, RNNT (W4's S3 mirror in jobs) | `2a77d305038dfc502fd9464e7d028b90381976cb` | MIT |
+| QA ASR 2 | vakyansh wav2vec2 Hindi (`Harveenchadha/vakyansh-wav2vec2-hindi-him-4200`) | HF main at job time (ungated) | MIT |
+| Resampling (only if an engine isn't 24 kHz) | pinned ffmpeg n9.0.2 (`pipeline/ffmpeg.py`, sha256-checked) | — | GPL build; a tool, outputs unaffected |
+| Compute | AWS SageMaker training jobs (PyTorch 2.9 DLC), S3 | — | — |
+
+No paid API and no LLM in round 2. **Label:** every round-2 record's audio comes from an NC-licensed model and clones speakers who never consented to cloning. That's fine for this private, non-commercial project, but these records must not go into anything released or commercial. W7: carry an `nc` flag per source (`source.model = k2-fsa/OmniVoice` identifies them).
+
+### Pilot: 500 W2 scripts on SageMaker (OmniVoice, 31 voices, up to 4 takes)
+
+Runs, all `uv run pipeline/run.py tts --in tts_in …` on the W2 pilot-v1 scripts (`stages/tts_in/20261014T120610Z-e91dd1d`):
+
+| Run | Instance | What | Billed |
+|---|---|---|---|
+| `20261014T130408Z-2161f95` | g4dn.2xlarge | omnivoice + pocket, forced pace, first bank. **Stopped** after 34 takes: first-take reject 5/6 per engine (pace and QA problems above) | 756 s |
+| `20261014T135249Z-b454356` | g4dn.2xlarge | first try of the final config. **Failed** at once on `archive/tts/rec-400051.wav already holds different audio` (the kept-audio key fix above) | 345 s |
+| `20261014T140334Z-d7219d7` | g4dn.2xlarge | **final config: renders all takes.** 469 records, 31 rejects, 665 takes, 0 violations | 8,831 s |
+| **`20261014T163810Z-ddf6f86`** | c5.xlarge (CPU) | **re-judge** of the same archived takes with the final QA equivalences (`--archive-only`; its checkpoint was seeded with the previous run's ASR hypotheses, so nothing was rendered or decoded). **484 records, 16 rejects, 0 violations. `tts` LATEST** | 420 s |
+
+**Result (`stages/tts/20261014T163810Z-ddf6f86`):**
+
+- **484 / 500 scripts kept (96.8%); 3.439 h of synthetic audio** (`validate.py --partial`: 484 records, 0 violations; the W2 estimate was 3.4 h). Clip length p10/p50/p90/max 15.9/24.6/36.6/54.3 s. 16 ids burned in `rejects.jsonl`.
+- Takes: 665 rendered (4.90 h of audio). On the final rules a kept script needed 1.22 takes on average; kept at take 1/2/3/4: 435/38/7/4.
+- **Voices: all 31 used** (13 f, 18 m), 6–30 records each (median 15). **Voice gender = script gender for 484/484.**
+- Pace: 0.100 s/char p50 (≈ 10 chars/s, close to IndicVoices conversation at 10.7).
+- Throughput on g4dn.2xlarge (T4, 8 vCPU): render 0.37 s and QA ASR 0.10 s per audio second, plus model loading. 2.4 h for the whole run.
+
+First takes (500), final QA rules:
+
+| Run | Takes | Audio h | CER ic p50/p90 | Entity hit | Number-entity hit | English-span hit | Agreed skip | Agreed insert | QA reject (r1 rules) | + 1 subst. | s/char p50 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| OmniVoice, W2 pilot | 500 | 3.59 | 0.018/0.036 | 98.8% | 99.4% | 99.3% | 2.0% | 0.6% | 10.6% | **13.0%** | 0.100 |
+
+- **By phenomenon** (first-take reject; scripts lost after 4 takes): digit strings 14% (7 of 258 lost), spelled acronyms 16% (7/185), lakh 12% (4/99), crore 20% (2/51), fractions 8% (4/131), dates 13% (1/103), times 14% (7/104), names 12% (11/290), self-corrections 12% (14/300), fillers 13% (8/251). The master's "budget re-renders for digits and acronyms" was right: they need the most retakes, but 4 takes keep 97% of them.
+- **The 16 lost scripts:**
+  - 12 fail every take on the same entity or English word. Rare proper nouns dominate: मेदांता (13 misses over all takes), ल्हाकपा (12), फ़ोर्टिस (5), उबर (4), also the clock form एट ओ वन. INFERRED: a consistent TTS mispronunciation or an ASR that doesn't know the name; ears would tell which.
+  - 2 always ran past 60 s: w2-00119 (440 chars) and w2-00453 (430 chars) with slow voices. The 55 s cap triggers from the reference's pace, and OmniVoice's own estimate came out longer.
+  - 2 have a repeated agreed substitution (तू→तो, कम्प्लेन→कंप्लेंट): ambiguous.
+- **QA equivalences found on this pilot** (both ASRs rewrite W2's spelling; INFERRED to be ASR spelling, not TTS errors): आइ→आई 38, है→हैं 12, भई→भाई 8, हैलो→हेलो, plus English ऐन/ऐड/ऐट → एन/एड/एट (folded in `qa.canon`). The re-judge recovered 15 scripts with them; 6 kept records switched to an earlier take.
+- **Cost:** the three pilot GPU runs took 9,932 s on g4dn.2xlarge ($1.035/h) = **$2.86**, plus $0.02 for the re-judge. **That is $0.84 per kept audio hour** including the abandoned attempts, or **$0.74** for the final run alone ($2.54 / 3.44 h). No API spend. Benches are in the spend log.
+
+## TTS-choice memo, round 2 (2026-10-14)
+
+1. **Primary engine: OmniVoice** (k2-fsa, weights CC BY-NC, NC), zero-shot cloning of IndicVoices speakers. Devanagari input; the engine's own pace; QA-gated with up to 4 takes.
+   - Measured: the best open engine here on the probe (11% QA reject, number-entity hit 98.6%) and on the W2 pilot (13% first-take reject, 96.8% kept, 99.4% number-entity hit).
+   - Voices are as many as there are good references; accent follows the reference (Indian, by construction).
+   - Fast: 0.37 s render per audio second on a T4.
+2. **Voice bank:** IndicVoices references at 8–14 chars/s (the pace filter is what made the clones natural *and* correct). 31 voices now (13 f, 18 m). For the bulk run, pull more female references from W1's next IndicVoices ingest: the filter currently finds only 13 women in 1,100 local files.
+3. **Second engine, optional: pocket-tts-hindi** (CC BY 4.0, 0.22 GB, CPU). 21% reject on the probe; worse on long W2 scripts (IndicConformer CER p50 0.074 vs 0.025 over 17 takes each). It's in the stage (`--engine omnivoice,pocket`: retakes rotate engines) for acoustic variety. Re-measure on W2 before giving it a share.
+4. **Not chosen:** Magpie (5 English-speaker voices), Indic Parler (40% reject, gated so no jobs), IndicF5 (gated, access not granted; last in SpeechArena), VoxCPM2 (never got GPU capacity; contradictory Hindi numbers), Chatterbox (torch pin; the Hindi finetune needs its Space's code), XTTS-v2 (older, NC like OmniVoice). Bulbul is out (no credits, not open).
+5. **Licence and consent:** the audio comes from an NC model and clones speakers who consented to IndicVoices, not to cloning. It's private and non-commercial only: never release it, and swap in consented voices before anything public.
+6. **Bulk run** (when W2's bulk scripts land):
+   - same command, `--engine omnivoice --max-takes 4`, g4dn.2xlarge;
+   - ≈ $0.74 per kept audio hour and ≈ 0.7 wall-hours per kept hour on one instance. 100 kept hours ≈ $75 and ≈ 70 h on one g4dn.2xlarge, well over this stream's $15 cap. A raise and sharding across instance types (each has quota 1) are needed: the stage has no `--shard i/n` yet (add it then).
+
+## Spend log, round 2 (AWS SageMaker, W3 cap $15)
+
+| Job | Instance | Billed s | $/h | $ |
+|---|---|---|---|---|
+| OmniVoice smoke (3 probes) | g4dn.2xlarge | 354 | 1.035 | 0.10 |
+| duplicate smoke, stopped while downloading | g4dn.xlarge | 36 | 0.811 | 0.01 |
+| OmniVoice pace variants (60 W2 scripts × 2) | g4dn.2xlarge | 1,663 | 1.035 | 0.48 |
+| pilot attempt 1 (stopped) | g4dn.2xlarge | 756 | 1.035 | 0.22 |
+| pilot attempt 2 (failed: key collision) | g4dn.2xlarge | 345 | 1.035 | 0.10 |
+| **pilot, final** | g4dn.2xlarge | 8,831 | 1.035 | **2.54** |
+| re-judge (archive only) | c5.xlarge | 420 | 0.204 | 0.02 |
+| OmniVoice probe bench (final config) | g4dn.2xlarge | 942 | 1.035 | 0.27 |
+| **Total** | | 13,347 | | **$3.74 of $15** |
+
+- Seven other submissions waited for capacity and were stopped before an instance started, so nothing was billed. Spot g4dn.xlarge never got capacity in 3 h.
+- `data/master/credits.sh` on 2026-10-14: "usage $2.03, credits $-2.03, NET $-0.00 → credits covering everything" (Cost Explorer lags ≈ 24 h).
+- Sarvam: ₹0 this round. S3: ≈ 1.5 GB added (takes, kept audio, stage runs), well under $0.1/month.
+
+## Status — 2026-10-14 (round 2)
+
+**Done:**
+1. **Survey of open Hindi TTS** (21 engines; table above). Measured on the probe set with the round-1 QA: OmniVoice (11% reject, final config) and pocket-tts-hindi (21%), next to round 1's Bulbul 18%, Magpie 11% and Parler 40%. Also a paired OmniVoice pace experiment on 60 W2 scripts.
+2. **`tts` stage** (`w3/tts.py`, `w3/tts_bench.py`, `w3/voices.py`; self-check `uv run w3/test_tts.py` covers retakes, crash-resume without re-render, write-once archive, engine rotation, bench, archive-only re-judge, the listening list). Registered in `pipeline/run.py` as `tts` and `tts_bench`. Runs on SageMaker via `run.py --sm` (GPU and CPU both verified) and on the laptop under the GPU flock (pocket bench).
+3. **Pilot on SageMaker:** `stages/tts/20261014T163810Z-ddf6f86` (**`tts` LATEST**): **484/500 W2 scripts kept, 3.439 h, 31 voices (13 f, 18 m), gender-matched 484/484, 0 validator violations**. First-take QA reject 13%; 16 scripts burned. **$2.88** of GPU/CPU for the pilot runs ($0.74–0.84 per kept hour).
+4. **Voice bank:** 31 (+ 40 first-bank) IndicVoices references, write-once in `raw/_voices/`, with licence sidecars and the consent caveat.
+5. **QA fixes,** measured on these takes: ASR spelling equivalences (`qa.SAME`, ऐ→ए fold). Round-1 verdicts move by 2/382.
+
+**Measured headline:** OmniVoice cloning at its own pace beats forcing a conversational pace (QA reject 25% vs 42%, agreed skips 0% vs 23%, paired n = 60). The voice bank's pace filter brought pilot first-take rejects from 25% (slow first bank) down to 13% at ≈ 10 chars/s.
+
+**Spend:** $3.74 of the $15 AWS cap (table above). No API spend.
+
+**Blockers / risks:**
+- **GPU capacity in ap-south-1 is scarce.** Jobs waited 5–60 min for g4dn/g5/g6, and spot never started in 3 h. The bulk run needs sharding across instance types (quota 1 each) and patience.
+- IndicF5 needs Harsh's "Agree" click on HF and an S3 mirror for jobs. Not needed now; OmniVoice is better on paper (SpeechArena puts IndicF5 last).
+
+**Handoffs:**
+- **W5:** align `stages/tts/20261014T163810Z-ddf6f86` (484 clips). Please report **filler durations**: 251 scripts carry W2's `filler` tag (उम्म/हम्म etc.) and no ASR can verify them. Two filler clips are also on Harsh's list.
+- **W6:** translate the same run. Each record carries `_w2` (the script minus `_gen`), so `entity_spans[].value`, `corrections` and `retracted` are there.
+- **W7:**
+  - Synthetic audio rebuilds by copying `_archive.tts` = `archive/tts/<id>-<take key[:16]>.wav`, never by re-synthesising (6/6 sampled: archive = stage audio = sidecar sha256).
+  - Burned ids: `rejects.jsonl` of that run (16).
+  - Orphan objects `archive/tts/rec-4000{50,51,52,54,55,56,58,59,60,62}.wav` are from abandoned runs and referenced by no record.
+  - **Flag these records NC and not-consented-for-cloning**; never release them.
+  - SageMaker leaves `*.sagemaker-uploaded` marker files next to every output in `stages/<stage>/<run>/` (checkpoint sync), e.g. 484 extra keys under `audio/`. Harmless to `validate.py`, but filter them in anything that lists a run's files.
+- **W2 (bulk scripts):**
+  - Spell English "I" as **आई** (38 agreed ASR rewrites of आइ) and भाई not भई.
+  - Keep scripts ≤ ~400 characters: 430–440-character scripts ran past 60 s with slower voices.
+  - Rare proper nouns (मेदांता, ल्हाकपा, फ़ोर्टिस) fail every take. Prefer names a Hindi speaker would recognise, or accept the loss.
+  - Single-letter fillers aren't the problem now; उम्म/हम्म still need W5's duration check.
+- **W1:** more wideband female IndicVoices speakers with clean 6–11 s segments at 8–14 chars/s would grow the voice bank (13 women today).
+- **Master:** `run.py --run <id>` plus a pre-seeded `stages/<stage>/<id>/_ckpt/` is a handy way to re-judge a stage on SageMaker from cached intermediates (used here). Bulk TTS at ≈ $0.74 per kept hour needs a cap raise if synthetic hours go above ~15.
+
+**The one list for Harsh (≈ 10 min, optional where noted):** `data/w3/listen/listen.tsv` + `data/w3/listen/audio/` (33 clips, 8.2 min of audio).
+- Clips 1–31: one per voice. **Native Indian Hindi accent? Is the voice the stated gender?** Write y/n in `answer`. If the first ~10 are all fine, the rest is optional: every voice is cloned from a native speaker, so accent problems would most likely be per-engine, not per-voice.
+- Clips 32–33: is the filler audible where the transcript has it?
+- Optional, only if IndicF5 is wanted later: click "Agree" on huggingface.co/ai4bharat/IndicF5.
+
+**Disk:** `data/w3` = 505 MB, within the 1.5 GB budget. pocket-tts weights (219 MB) deleted from the shared HF cache. No OmniVoice or VoxCPM2 weights were ever downloaded locally.
