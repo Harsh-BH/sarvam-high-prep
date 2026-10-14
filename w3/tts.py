@@ -250,28 +250,9 @@ def load_pocket():
         if v["voice"] not in states:
             states[v["voice"]] = m.get_state_for_audio_prompt(ref_path(v))
         seed_all(seed)
-        gap = np.zeros(int(0.3 * m.sample_rate), np.float32)
-        out = []
-        for c in chunks(text):
-            out += [m.generate_audio(states[v["voice"]], c).float().numpy(), gap]
-        return np.concatenate(out[:-1]), m.sample_rate
+        plain = " ".join(re.sub(r"[,।?!]", " ", text).split())  # trained without punctuation (card)
+        return m.generate_audio(states[v["voice"]], plain).float().numpy(), m.sample_rate
     return synth
-
-
-def chunks(text, max_words=14):
-    """Pocket input: trained without punctuation (card), and its own splitter only breaks at . ! ? and warns that
-    chunks over 50 tokens may skip words. So: one chunk per sentence, long sentences cut at commas, no punctuation."""
-    out = []
-    for sent in re.split(r"[।?!]", text):
-        cur = []
-        for piece in sent.split(","):
-            if cur and len(cur) + len(piece.split()) > max_words:
-                out.append(" ".join(cur))
-                cur = []
-            cur += piece.split()
-        if cur:
-            out.append(" ".join(cur))
-    return out
 
 
 def load_fake():
@@ -285,7 +266,7 @@ ENGINES = {
     "voxcpm2": {"model": "openbmb/VoxCPM2", "rev": "32279effe8c19989596f05d353d1447f51d9e915", "clone": True,
                 "load": load_voxcpm2},
     "pocket": {"model": "saryps-labs/pocket-tts-hindi", "rev": "6bff9c1e776bb90c68dd05c2467c62d1ecdf1b51", "clone": True,
-               "load": load_pocket, "opts": "chunks: sentences, commas past 14 words; no punctuation; 0.3 s gaps"},
+               "load": load_pocket},
     "parler": {"model": "ai4bharat/indic-parler-tts", "rev": "660bc53c", "clone": False, "load": load_parler},
     "fake": {"model": "w3-selfcheck-tone", "rev": "0", "clone": False, "load": load_fake},
 }
@@ -533,6 +514,5 @@ def main(argv=None):
 if __name__ == "__main__":
     assert text_key({"tts_dev": "क"}) == text_key({"tts_dev": "क", "pid": "x"}) != text_key({"tts_dev": "ख"})
     assert slug("ai4bharat/indic-parler-tts".split("/")[-1]) == "indic-parler-tts"
-    assert chunks("एक, दो। तीन चार? पाँच") == ["एक दो", "तीन चार", "पाँच"] and chunks("क ख, ग घ", 2) == ["क ख", "ग घ"]
     assert RATE_LO <= voice_rate("iv-S1") <= RATE_HI and voice_rate("iv-S1") == voice_rate("iv-S1") != voice_rate("iv-S2")
     main()
