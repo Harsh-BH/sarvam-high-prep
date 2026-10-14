@@ -40,9 +40,12 @@ def main():
     assert A.fill_gaps([(6, 7), (20, 22)], db, 10, 3) == [[5, 13], [13, 25]]  # a voiced gap splits uncapped
 
     # QA flags: an unspoken word (all characters ~0, squeezed) and a 40 ms filler; a spoken low-posterior filler passes
-    ws = [(0, 2, 0.001, 0.002, 2), (2, 9, 0.001, 0.002, 2), (9, 10, 0.0, 0.0, 1), (10, 20, 0.0, 0.0, 1)]
+    ws = [(0, 2, 0.001, 0.005, 2), (2, 9, 0.001, 0.002, 2), (9, 10, 0.0, 0.0, 1), (10, 20, 0.0, 0.0, 1)]
     times = [(0.0, 0.04), (0.04, 0.18), (0.18, 0.22), (0.22, 0.4)]
-    assert A.word_flags(["कल", "कल", "अ", "अ"], ws, times) == [[0, "unspoken"], [2, "filler_short"]]
+    assert A.word_flags(["कल", "कल", "अ", "अ"], ws, times, True) == [[0, "unspoken"], [2, "filler_short"]]
+    assert A.word_flags(["कल", "कल", "अ", "अ"], ws, times, False) == [[2, "filler_short"]]  # real needs posterior < 0.003
+    ws[0] = (0, 2, 0.001, 0.001, 2)
+    assert A.word_flags(["कल", "न", "अ", "अ"], ws, times, False) == [[0, "unspoken"], [2, "filler_short"]]
     assert A.verdict({"regret": 0.1, "flags": [[2, "filler_short"]]}) == "filler_short"
     assert A.verdict({"regret": A.REGRET_MAX + 0.1, "flags": []}) == "align_regret"
 

@@ -512,7 +512,7 @@ def qa_of(x, rec, set_name, cond):
     """The stage's QA (align.word_flags + verdict) recomputed from a stored w2v result."""
     ws = A.word_spans([tuple(t) for t in x["spans"]], "|")
     times = [(round(s * A.FRAME, 3), round(e * A.FRAME, 3)) for s, e in A.fill_gaps(ws, level(set_name, rec, cond))]
-    flags = A.word_flags([w for ws_ in A.words_of(rec) for w in ws_], ws, times)
+    flags = A.word_flags([w for ws_ in A.words_of(rec) for w in ws_], ws, times, rec.get("source", {}).get("synthetic", True))
     return A.verdict({"regret": x["regret"], "flags": flags}), flags, times
 
 

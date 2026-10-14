@@ -31,7 +31,11 @@ THREADS = 8  # fixed: float reduction order, hence the emissions, can depend on 
 FINAL = "।?!"
 FILLERS = {"अ", "अं", "आ", "ए", "उम्म", "हम्म"}  # SPEC R9
 VAD_RISE, VAD_CAP = 10, 5  # fill_gaps: dB above the clip floor; frames (100 ms). Picked on the W5 control set
-UNSPOKEN_POST, FILLER_MIN, REGRET_MAX = 0.01, 0.06, 0.5  # QA (word_flags, verdict); see tasks/W5-alignment.md
+# QA, calibrated in tasks/W5-alignment.md. UNSPOKEN[synthetic] = (max character posterior below, spare frames at most,
+# characters at least): clean TTS never trips the lenient rule; real telephone speech reduces short function words, so
+# real records get the strict one. FILLER_MIN: W3's rule. REGRET_MAX: clean max 0.38, swapped transcripts >= 1.06.
+UNSPOKEN = {True: (0.03, 1, 1), False: (0.003, 0, 2)}
+FILLER_MIN, REGRET_MAX = 0.06, 0.5
 REJECT_FLAGS = {"unspoken", "filler_short"}
 
 
@@ -169,15 +173,17 @@ def set_times(rec, times):
         j += len(sw)
 
 
-def word_flags(words, ws, times):
-    """QA flags per word: `unspoken` = a non-filler word whose every character has posterior < UNSPOKEN_POST and
-    that Viterbi squeezed to at most one spare frame (a transcript word the audio lacks); `filler_short` = a filler
-    shorter than FILLER_MIN s after gap filling. Fillers get no posterior test: the model never emits them."""
+def word_flags(words, ws, times, synthetic):
+    """QA flags per word: `unspoken` = a non-filler word whose every character has a posterior below the source's
+    UNSPOKEN limit and that Viterbi squeezed to its minimum frames (a transcript word the audio lacks, e.g. a TTS
+    skip); `filler_short` = a filler shorter than FILLER_MIN s after gap filling. Fillers get no posterior test: the
+    model never emits them (most spoken अ score ~0)."""
+    post, spare, chars = UNSPOKEN[bool(synthetic)]
     flags = []
     for i, (w, (s, e, _, top, n), (t0, t1)) in enumerate(zip(words, ws, times)):
         if w in FILLERS and t1 - t0 < FILLER_MIN:
             flags.append([i, "filler_short"])
-        elif w not in FILLERS and top < UNSPOKEN_POST and e - s <= n + 1:
+        elif w not in FILLERS and top < post and e - s <= n + spare and n >= chars:
             flags.append([i, "unspoken"])
     return flags
 
@@ -194,7 +200,7 @@ def align(rec, lp, db, tokens, index):
     set_times(rec, [(s * FRAME, e * FRAME) for s, e in filled])
     times = [(x["start"], x["end"]) for x in rec["hi_words"]]
     best = lp.max(-1).values.sum().item()  # greedy path: forced == best iff the transcript is what the model hears
-    qa = {"regret": round((best - forced) / lp.shape[0], 4), "flags": word_flags(words, ws, times)}
+    qa = {"regret": round((best - forced) / lp.shape[0], 4), "flags": word_flags(words, ws, times, rec["source"]["synthetic"])}
     raw = {"model": MODEL, "rev": REV, "frame": FRAME, "frames": lp.shape[0], "fill": [VAD_RISE, VAD_CAP],
            "greedy": greedy(lp, tokens), "spans": [[tokens[t], s, e, round(c, 4)] for t, s, e, c in spans],
            "words": filled}
