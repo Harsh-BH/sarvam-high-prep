@@ -30,7 +30,13 @@ run_step() {  # run_step <stage> local|sm <instance> [-- params]; chains $prev -
     printf '%s\t%s\tstarted\n' "$stage" "$rid" >> "$LOG"
     say "$stage $rid ($where) <- $prev"
     if [ "$where" = sm ]; then
-      out=$(uv run pipeline/run.py "$stage" --in "$prev" --run "$rid" --sm "$inst" --spot "$@" 2>&1); rc=$?
+      exec {sl}>"$D/.sm.submit"; flock "$sl"  # one S1 submit at a time, so the account-wide count can't race
+      while [ "$(spot_used)" -ge 8 ]; do sleep 60; done  # leave 2 of the account's 10 spot slots to other sessions
+      uv run pipeline/run.py "$stage" --in "$prev" --run "$rid" --sm "$inst" --spot "$@" > "$D/chains/$tag.$stage.out" 2>&1 &
+      local pid=$!
+      until aws sagemaker describe-training-job --training-job-name "sarvam-${stage//_/-}-$rid" >/dev/null 2>&1 || ! kill -0 $pid 2>/dev/null; do sleep 5; done
+      exec {sl}>&-
+      wait $pid; rc=$?; out=$(cat "$D/chains/$tag.$stage.out")
     else
       out=$(uv run pipeline/run.py "$stage" --in "$prev" --run "$rid" --local "$@" 2>&1); rc=$?
     fi
@@ -40,6 +46,13 @@ run_step() {  # run_step <stage> local|sm <instance> [-- params]; chains $prev -
   done
   printf '%s\t%s\tok\n' "$stage" "$rid" >> "$LOG"
   prev="stages/$stage/$rid"
+}
+spot_used() {  # spot training instances in use account-wide, every session's (each job here is 1 instance)
+  local n=0 j
+  for j in $(aws sagemaker list-training-jobs --status-equals InProgress --max-results 100 --query "TrainingJobSummaries[].TrainingJobName" --output text); do
+    [ "$(aws sagemaker describe-training-job --training-job-name "$j" --query EnableManagedSpotTraining --output text)" = True ] && n=$((n + 1))
+  done
+  echo $n
 }
 with_slot() {  # run "$@" holding one of SLOTS SageMaker slots
   while true; do
