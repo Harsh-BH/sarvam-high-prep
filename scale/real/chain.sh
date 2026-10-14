@@ -30,9 +30,10 @@ run_step() {  # run_step <stage> local|sm <instance> [-- params]; chains $prev -
     printf '%s\t%s\tstarted\n' "$stage" "$rid" >> "$LOG"
     say "$stage $rid ($where) <- $prev"
     if [ "$where" = sm ]; then
-      exec {sl}>"$D/.sm.submit"; flock "$sl"  # one S1 submit at a time, so the account-wide count can't race
+      exec {sl}>"$D/.sm.submit2"; flock "$sl"  # one S1 submit at a time, so the account-wide count can't race
       while [ "$(spot_used)" -ge 8 ]; do sleep 60; done  # leave 2 of the account's 10 spot slots to other sessions
-      uv run pipeline/run.py "$stage" --in "$prev" --run "$rid" --sm "$inst" --spot "$@" > "$D/chains/$tag.$stage.out" 2>&1 &
+      # {sl}>&-: the job must not inherit the submit lock, or it holds it until the job ends
+      uv run pipeline/run.py "$stage" --in "$prev" --run "$rid" --sm "$inst" --spot "$@" > "$D/chains/$tag.$stage.out" 2>&1 {sl}>&- &
       local pid=$!
       until aws sagemaker describe-training-job --training-job-name "sarvam-${stage//_/-}-$rid" >/dev/null 2>&1 || ! kill -0 $pid 2>/dev/null; do sleep 5; done
       exec {sl}>&-
