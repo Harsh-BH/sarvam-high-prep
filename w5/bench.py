@@ -651,8 +651,18 @@ def human(*stage_dirs):
     print(f"{len(rows)} items -> {HUMAN}/index.html, answers.tsv")
 
 
+def human_score():
+    """Tally Harsh's answers.tsv: boundary ok rate; share of `unspoken` rejects whose word was in fact spoken (lost
+    good records); share of fillers actually heard."""
+    import csv
+    rows = list(csv.DictReader(open(HUMAN / "answers.tsv", encoding="utf-8"), delimiter="\t"))
+    for kind in QUESTIONS:
+        got = [r["answer"].strip().lower() for r in rows if r["kind"] == kind and r["answer"].strip()]
+        print(f"{kind}: {len(got)} answered " + " ".join(f"{a}={got.count(a)}" for a in sorted(set(got))))
+
+
 if __name__ == "__main__":
     if sys.argv[1].startswith("--"):
         stage(sys.argv[1:])
     else:
-        {"ctrl": ctrl, "run": run, "score": score, "human": human}[sys.argv[1]](*sys.argv[2:])
+        {"ctrl": ctrl, "run": run, "score": score, "human": human, "human-score": human_score}[sys.argv[1]](*sys.argv[2:])
