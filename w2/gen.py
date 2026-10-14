@@ -6,7 +6,8 @@
 (every call through pipeline/archive.archive_call) -> checks -> scripts in W3's probe format.
 
     uv run w2/gen.py bake [--n 30] [--models a,b]     # generator bake-off: same 30 specs per model, first take only
-    uv run w2/gen.py pilot --model NAME --n 500        # data/w2/scripts.jsonl + rejects.jsonl, up to --takes tries
+    uv run w2/gen.py pilot --model NAME --n 500        # data/w2/scripts.jsonl + rejects.jsonl: --takes fresh tries,
+                                                       # then --repairs turns that show the model its answer and what broke
 
 The LLM writes markup: {देवनागरी|latin} = English words, [text|type] = entity. W3's w3/probe.py:parse turns it into
 tts_dev / tts_lat / hi_text / sentences / entities / en_words and runs validate.py's SPEC §2 checks on the text.
@@ -271,10 +272,11 @@ def converse(req):
             "reasoning_chars": sum(len(b["reasoningContent"].get("reasoningText", {}).get("text", "")) for b in blocks if "reasoningContent" in b)}, None
 
 
-def llm(name, user, take):
+def llm(name, user, take, hist=()):
+    """hist: a repair turn's [role, text] messages after the user prompt (empty = a fresh take, same request as before)."""
     import archive
     model, pin, pout = MODELS[name]
-    msgs = [x for q, a in SHOTS for x in (["user", q], ["assistant", a])] + [["user", user]]
+    msgs = [x for q, a in SHOTS for x in (["user", q], ["assistant", a])] + [["user", user]] + [list(m) for m in hist]
     req = {"model": model, "system": SYSTEM, "messages": msgs, "config": CONFIG, "take": take, "v": PROMPT_V}
     est_in = (len(SYSTEM) + sum(len(t) for _, t in msgs)) / 2  # Devanagari tokenises at ~2 chars/token or worse
     inr = (est_in * pin + EST_OUT * pout) / 1000 * USD_INR  # estimate charged against the cap before the call
@@ -420,7 +422,7 @@ def check(sp, raw, pid):
         if not ok:
             fails.append("correction")
     toks = [t for s in item["sentences"] for t in s[:-1].split()]
-    mm, ff = gender_marks(toks)
+    mm, ff = gender_marks(re.sub(r"[।?!]", " ", dev(probe.ENT.sub(" ENT ", plain))).split())  # a name before हूँ is no verb
     if (c["gender"] == "f" and mm) or (c["gender"] == "m" and ff):
         fails.append("gender")
     bare = probe.transcript(probe.ENT.sub(r"\1", probe.EN.sub(" ", plain))).replace("।", " ").replace("?", " ").replace("!", " ")
@@ -440,16 +442,61 @@ def check(sp, raw, pid):
     return item, fails
 
 
-def generate(name, cell, pid, seed, takes):
-    """One script: up to `takes` tries. -> record with model/take/key/cost and fails ([] = kept)."""
+LATIN = re.compile(r"[A-Za-z][A-Za-z'’ ]*")
+RULE = {"entity_type": "Every entity is [text|type] with type one of: " + " ".join(sorted(TYPES)) + ".",
+        "gender": "Every first-person verb must agree with the speaker's gender given in the request.",
+        "filler": "Never use the fillers अ, अं or ए; only उम्म or हम्म.",
+        "length": "Keep to the requested length.",
+        "format": "Output only the monologue, on one line, between <script> and </script>."}
+
+
+def feedback(sp, item, fails):
+    """A repair turn's message: each rule the answer broke, quoting the offending text where code can find it."""
+    out = []
+    if "spec_text" in fails:
+        bare = probe.ENT.sub(r"\1", probe.EN.sub(r"\1", item["marked"]))  # Latin on the Devanagari side counts too
+        lat = [m.strip() for m in LATIN.findall(bare)]
+        sym = sorted({ch for ch in bare if not ("\u0900" <= ch <= "\u097f" or ch in " ,।?!" or ch.isascii() and ch.isalpha())})
+        if lat:
+            out.append("Latin letters outside the {देवनागरी|latin} markup: " + "; ".join(f'"{x}"' for x in lat) + ". Write that "
+                       "English in Devanagari as an Indian speaker pronounces it, wrapped as {देवनागरी|latin} with the English on the right.")
+        if sym:
+            out.append("Symbols that are not allowed: " + " ".join(sym) + ". Use only commas and । ? ! as punctuation.")
+        if not (lat or sym) or set(sym) & set("[]{}|"):
+            out.append("The markup is broken: every { needs its |latin}, every [ its |type], and nothing else uses brackets.")
+    if "entity_missing" in fails:
+        have = item.get("entities", [])
+        ents = [e for e, _ in sp["ents"]] + ([sp["corr"]["wrong"]] if sp["corr"] and "wrong" in sp["corr"] else [])
+        out.append("These entities are missing or altered; copy each exactly, character for character, wrapped: "
+                   + ", ".join(wrap(e) for e in ents if dev(e.text) not in have) + ".")
+    if "correction" in fails:
+        c = sp["corr"]
+        out.append(f"The self-correction must say {wrap(c['wrong'])}, then \"{c['marker']}\", then {wrap(c['right'])}, in that order."
+                   if "wrong" in c else f"The self-correction must use \"{c['marker']}\" between the wrong word and the right one.")
+    if "intent" in fails:
+        out.append(INTENTS[sp["cell"]["intent"]][1])
+    if "disfluency" in fails:
+        out.append("Include the required disfluency: " + " and ".join(x for k, x in (("filler", "the filler उम्म or हम्म once"),
+                   ("repeat", "one word said twice in a row")) if sp["cell"].get(k) == "yes") + ".")
+    out += [RULE[f] for f in fails if f in RULE]
+    return nfc("Your monologue breaks these rules:\n- " + "\n- ".join(out) + "\nFix only these, keep everything else, and "
+               "output the whole corrected monologue between <script> and </script>.")
+
+
+def generate(name, cell, pid, seed, takes, repairs=0):
+    """One script: `takes` fresh tries, then `repairs` turns that show the model its last answer and what broke.
+    -> record with model/take/key/cost and fails ([] = kept)."""
     sp = spec(cell, f"{seed}:{pid}")
     user = user_prompt(sp)
-    cost, tries = 0.0, []
-    for take in range(takes):
-        resp, key, usd = llm(name, user, take)
+    cost, tries, hist = 0.0, [], []
+    for take in range(takes + repairs):
+        if take >= takes:
+            hist += [["assistant", resp["text"]], ["user", feedback(sp, item, fails)]]
+        resp, key, usd = llm(name, user, take, hist)
         cost += usd
         item, fails = check(sp, resp["text"], pid)
-        tries.append({"take": take, "key": key, "fails": fails, "out_tokens": resp["usage"]["outputTokens"], "ms": resp["ms"]})
+        tries.append({"take": take, "repair": take >= takes, "key": key, "fails": fails,
+                      "out_tokens": resp["usage"]["outputTokens"], "ms": resp["ms"]})
         if not fails:
             break
     rec = {"pid": pid, **(item or {}), "fails": fails, "model": name, "model_id": MODELS[name][0], "take": take,
@@ -458,9 +505,9 @@ def generate(name, cell, pid, seed, takes):
     return rec
 
 
-def run(name, cells, prefix, seed, takes, workers=8):
+def run(name, cells, prefix, seed, takes, repairs=0, workers=8):
     with ThreadPoolExecutor(workers) as ex:
-        futs = [ex.submit(generate, name, c, f"{prefix}{i + 1:05d}", seed, takes) for i, c in enumerate(cells)]
+        futs = [ex.submit(generate, name, c, f"{prefix}{i + 1:05d}", seed, takes, repairs) for i, c in enumerate(cells)]
         out = []
         for f in futs:
             out.append(f.result())
@@ -483,6 +530,7 @@ def main():
     ap.add_argument("--models", default=",".join(MODELS))
     ap.add_argument("--model")
     ap.add_argument("--takes", type=int, default=5)
+    ap.add_argument("--repairs", type=int, default=2)
     a = ap.parse_args()
     if a.mode == "bake":
         cells = design(a.n or 30, "bake-v1")
@@ -491,7 +539,7 @@ def main():
             write(DATA / f"bake/{name}-{PROMPT_V}.jsonl", recs)
             print(name, Counter(f for r in recs for f in r["fails"] or ["ok"]), file=sys.stderr)
     else:
-        recs = run(a.model, design(a.n or 500, "pilot-v1"), "w2-", "pilot-v1", takes=a.takes)
+        recs = run(a.model, design(a.n or 500, "pilot-v1"), "w2-", "pilot-v1", takes=a.takes, repairs=a.repairs)
         write(DATA / "scripts.jsonl", [r for r in recs if not r["fails"]])
         write(DATA / "rejects.jsonl", [r for r in recs if r["fails"]])
         print(f"{sum(not r['fails'] for r in recs)} kept, {sum(bool(r['fails']) for r in recs)} rejected; "
@@ -522,4 +570,14 @@ if __name__ == "__main__":
     atm = {**s, "ents": [], "corr": None, "cell": {**s["cell"], "intent": "refusal", "filler": "no", "repeat": "no"}}
     assert "filler" not in check(atm, "<script>नहीं, मुझे नया {ए टी एम|ATM} कार्ड नहीं चाहिए, बिल्कुल नहीं।</script>", "t2")[1]
     assert "filler" in check(atm, "<script>ए, मुझे नया कार्ड नहीं चाहिए, बिल्कुल नहीं।</script>", "t3")[1]
+    bad, f = check(atm, "<script>मुझे I will get it, but नहीं चाहिए - बिल्कुल नहीं।</script>", "t4")
+    fb = feedback(atm, bad, f)
+    assert f == ["spec_text"] and '"I will get it"' in fb and '"but"' in fb and ": -." in fb, fb
+    bad, f = check(atm, "<script>{डबल|double} हाँ - नहीं।</script>", "t5")
+    assert f == ["spec_text"] and "double" not in feedback(atm, bad, f), "Latin inside markup is fine"
+    bad, f = check(atm, "<script>मेरा {KYC|KYC} नहीं हुआ।</script>", "t6")
+    assert '"KYC"' in feedback(atm, bad, f)
+    fem = {**atm, "cell": {**atm["cell"], "gender": "f"}}
+    assert "gender" not in check(fem, "<script>मैं [ग्रेस डिसूज़ा|name] हूँ, नहीं।</script>", "t7")[1]
+    assert "gender" in check(fem, "<script>मैं आ रहा हूँ, नहीं।</script>", "t8")[1]
     main()

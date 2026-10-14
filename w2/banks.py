@@ -244,7 +244,7 @@ def g_time(r, dom, lang="hi", frac=False):
         if c >= 0.85 or (lang == "en" and mm):  # English clock time: {टेन थर्टी|ten thirty}
             mm = mm or 30
             a, b = en(h12)
-            m1, m2 = en(mm)
+            m1, m2 = en(mm) if mm >= 10 else (f"{nfc('ओ')} {EN_D[mm]}", f"oh {EN_DL[mm]}")  # eight oh one, not eight one
             text = pre + "{" + f"{a} {m1}|{b} {m2}" + "}"
         else:
             text = pre + (f"{H[h12]} बजे" if mm == 0 else f"{H[h12]} बजकर {H[mm]} मिनट")
@@ -433,6 +433,8 @@ if __name__ == "__main__":
                 bare = re.sub(r"\{[^{}|]+\|[^{}]+\}", "", e.text)
                 assert e.value and not re.search(r"[0-9A-Za-z]", bare), (k, e)
                 assert e.text == nfc(e.text), e
+    eng = [e for e in (g_time(random.Random(i), "travel", "en") for i in range(300)) if "{" in e.text and 0 < int(e.value[-2:]) < 10]
+    assert eng and all("oh" in e.text for e in eng), eng[:3]
     t = g_time(random.Random(5), "travel", frac=True)
     assert t.kind == "frac" and t.type == "time", t
     print("banks ok:", {k: g(random.Random(7), "banking") for k, g in NUMFORMS.items()})

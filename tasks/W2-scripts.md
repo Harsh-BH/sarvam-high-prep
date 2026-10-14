@@ -105,8 +105,8 @@ One JSON object per line, sorted by `pid`. The first block is **exactly W3's pro
 | `cell` | the requested coverage cell |
 | `est_sec`, `words` | estimated audio seconds (0.099 s/char), word count |
 | `scenario`, `setting` | prompt context |
-| `model`, `model_id`, `take` | generator and the take that passed |
-| `_gen` | prompt version, the exact user prompt, every try's archive key and failures, USD, raw output |
+| `model`, `model_id`, `take` | generator and the take that passed; `take` ≥ `--takes` (5) is a repair turn |
+| `_gen` | prompt version, the exact user prompt, every try's archive key, failures and `repair` flag, USD, raw output |
 
 For W6: translate `hi_text`; entity values and `corrections[].value` are the references for the entity check, and a `retracted` span must not appear in the English as fact (FAQ). For W3: `source.corpus = "w2-scripts-v1"` (SPEC §5).
 
@@ -199,3 +199,196 @@ Definitions:
 - The v1-v3 differences in pass rate are within noise at n = 30. Its prompt changes are kept for the naturalness proxies, not for the pass rate.
 - Discourse words remain ~1.6× IndicVoices.
 - English share is ~12% of words (lexicon) vs ~1% in IndicVoices extempore (same lexicon, a lower bound there). This is by design: the scripts are customer-service Hinglish (§4 "English words, phrases or clauses"), not IV's general-topic speech. It is the one proxy deliberately far from IV.
+
+## Pilot (2026-10-14, W2)
+
+`uv run w2/gen.py pilot --model deepseek-v3.2 --n 500 --takes 5 --repairs 4`. It writes `data/w2/scripts.jsonl` (500) and `rejects.jsonl` (0). A rerun from this commit replays every call from the archive.
+
+**Prompt v4** (on top of v3):
+- The heavy code-mix instruction asks for an English clause "of your own", with no copyable example sentence.
+- Entity self-corrections are near misses (`gen.near`: a count keeps its unit, an amount stays within 3×).
+- The banned-filler check skips English spans: ए is also the letter A in {ए टी एम|ATM}.
+
+**Repair turns (new).** After 5 fresh takes, up to 4 turns show the model its own last answer plus the rules it broke, quoting the offending text where code can find it (`gen.feedback`).
+- All 58 cells still failing after 5 takes were **heavy** code-mix: the model writes its English clause in Latin outside the markup ("आपने वादा किया था कि I will get it by yesterday").
+- Repair turns rescued all 58; two of them needed the check fixes below.
+- The repaired heavy scripts keep their English: marked English p50 is 30% of words, vs 27% for the 42 heavy scripts that passed on a fresh take.
+- Heavy cells pass the first take only 12% of the time (all cells: 65%).
+- First-take pass rate: 323/500 = 65%. Takes needed: 0 → 323, 1 → 72, 2 → 29, 3 → 11, 4 → 7, repair 1 → 47, repair 2 → 8, repair 3 → 3.
+
+**Fixes found on the pilot:**
+- `gender` false positive: in "मैं [ग्रेस डिसूज़ा|name] हूँ" the name's final ा read as a masculine verb. Entity spans are now masked before the gender check.
+- Repair feedback missed Latin on the Devanagari side of the markup (`{KYC|KYC}`).
+- Verbaliser bug: an English clock time with minutes 1–9 said "एट वन" for 8:01. It now says "एट ओ वन" (eight oh one). 4 scripts were regenerated; no other cell's prompt changed (checked).
+- Report: the English lexicon now requires a word to be marked in ≥ 50% of its occurrences. The LLM sometimes wraps a Hindi word with its translation ({पैसे|money}), which had made मेरा and पैसे "English". With the new lexicon the bake-off ranking on unmarked English is unchanged; the bake tables above used the old definition.
+
+### Coverage report (500 kept of 500 designed)
+
+`uv run --no-project python w2/report.py coverage` prints the full report.
+
+**Designed cells:** every dimension is at target exactly, because no cell was lost:
+- domain: 80/70/55/65/60/60/50/60;
+- intent: 12 phenomena, 30–50 each;
+- self-correction: entity 225, other 75, none 200, each marker 60;
+- code-mix: 150/250/100;
+- length: 150/250/100;
+- gender: 250/250;
+- filler: 250; repetition: 150.
+
+Domain × primary number form (kept / target):
+
+| domain | lakh/crore | fraction | 21–99 | digits | ID code | English digits | date | time | plain amount |
+|---|---|---|---|---|---|---|---|---|---|
+| banking | 20/20 | 12/12 | 8/8 | 12/12 | 12/12 | 4/4 | 4/4 | · | 8/8 |
+| upi | 4/4 | 11/11 | 11/11 | 11/11 | 10/10 | 7/7 | 3/3 | 3/3 | 10/10 |
+| telecom | · | 6/6 | 11/11 | 11/11 | 6/6 | 8/8 | 5/5 | 3/3 | 5/5 |
+| ecommerce | 3/3 | 7/7 | 13/13 | 7/7 | 6/6 | 6/6 | 10/10 | 3/3 | 10/10 |
+| travel | · | 9/9 | 6/6 | 6/6 | 9/9 | 6/6 | 9/9 | 15/15 | · |
+| health | 12/12 | 9/9 | 9/9 | 3/3 | 6/6 | 3/3 | 6/6 | 9/9 | 3/3 |
+| gov | 8/8 | 5/5 | 5/5 | 5/5 | 13/13 | 3/3 | 7/7 | 2/2 | 2/2 |
+| everyday | 6/6 | 15/15 | 9/9 | 6/6 | 3/3 | 6/6 | 3/3 | 9/9 | 3/3 |
+| **total** | 53/53 | 74/74 | 72/72 | 61/61 | 65/65 | 43/43 | 47/47 | 44/44 | 41/41 |
+
+**Realised content** (scripts containing it, measured on the text):
+
+| content | scripts |
+|---|---|
+| lakh | 99 |
+| crore | 51 |
+| fraction | 131 (डेढ़ 28, ढाई 26, सवा 32, साढ़े 34, पौने 28) |
+| 21–99 | 256 |
+| digit string (≥ 4 digits) | 258 |
+| डबल/ट्रिपल | 218 |
+| English digits | 168 |
+| acronym | 185 |
+| date | 103 |
+| time | 104 |
+| name | 290 |
+| place | 129 |
+| brand | 423 |
+| self-correction | 300 |
+| filler | 251 |
+| English | 500 |
+
+**Intent:** every requested phenomenon that code can detect is present in all of its scripts:
+- neg_place 50/50, tag_na 50/50, nahi_to 35/35, mat 40/40, cond 50/50, intonation_q 45/45, causative 45/45, kal_parson 40/40.
+- They also occur unrequested, e.g. tag ना in 95 scripts and causatives in 121.
+- refusal (40), confirmation (40), prodrop (30) and ne_ko (35) need a reader and are requested only, not verified.
+
+**Entities:**
+- 2,084 spans, 4.2 per script.
+- 2,043 were pre-verbalised by `banks.py`, so the value is known; the LLM added 41.
+- 225 are retracted (corrected away).
+- By type: org 336, amount 327, name 311, product 248, id 205, date 137, place 137, time 124, number 100, phone 95, account 64.
+
+**Entity values vs an independent parser.** W6's `w6/qa.py:hi_numbers` was written separately from `banks.py`. Read back against each value:
+
+| type | W6 parse = value |
+|---|---|
+| amount | 322/322 |
+| number | 100/100 |
+| phone | 94/94 |
+| account | 64/64 |
+| id (digits) | 203/203 |
+| time | 115/118 |
+| date | 104/115 |
+
+All 14 disagreements are parser conventions, not verbaliser errors:
+- a bare एक is ignored as an article (एक बजे, एक जुलाई);
+- English years are not joined (ट्वेंटी ट्वेंटी सेवन);
+- ओ ("oh") is not read as zero.
+
+So the number spelling and the values need no listening.
+
+**Length and code-mix, realised:**
+
+| length | asked (words) | est. seconds p10/p50/p90 | words in band |
+|---|---|---|---|
+| short | 30–50 | 13.5/16.8/20.7 | 73% |
+| medium | 55–95 | 20.5/24.6/28.7 | 93% |
+| long | 105–140 | 29.4/33.9/40.3 | **18%** |
+
+| code-mix | marked English % of words p10/p50/p90 |
+|---|---|
+| light | 7/14/24 |
+| medium | 11/18/29 |
+| heavy | 20/28/38 |
+
+- Long scripts come out at ≈ 90 words, not 105–140. The check only enforces 9–57 s, so nothing goes past ≈ 45 s.
+- "Light" carries more English than asked, because everyday loanwords ({बैंक|bank}, {फ़ोन|phone}) count.
+- Estimated audio: **3.38 h** at one render per script.
+- 331/500 scripts carry a first-person gender marker that the voice must match.
+
+**Naturalness vs IndicVoices L1** (628 W4 pool transcripts, same code; per 100 words):
+
+| text | words/sent | fillers | discourse | repeats | written register | English (lexicon) % | distinct-2 |
+|---|---|---|---|---|---|---|---|
+| IndicVoices L1 | 15.1 | 1.34 | 1.13 | 0.53 | 0.18 | 3.6 | 0.64 |
+| W2 pilot | 13.7 | 0.91 | 1.59 | 0.71 | 0.07 | 13.3 | **0.49** |
+
+**Diversity:**
+- The maximum word-trigram Jaccard between any two scripts is 0.07; no pair is above 0.2.
+- The maximum overlap with a few-shot example is 0.04.
+- The most common two-word opening covers 8% of scripts.
+- distinct-2 is lower than IV's at a similar corpus size. INFERRED: the domain-bound customer-care register repeats bigrams (मेरा अकाउंट, कर दीजिए); IV is free-topic speech.
+
+**Known content limits:**
+- 26/500 scripts (5%) in e-commerce, telecom or everyday put a lakh-scale amount on a small purchase, e.g. ₹19.5 lakh for DTH. The design draws the amount and the scenario independently.
+- English-markup recall is ≈ 84%: 15.8% of lexicon words stand outside `{..|..}`. This affects only `tts_lat` and `en_words`, not `tts_dev`, `hi_text` or entities.
+
+## Status — 2026-10-14
+
+**Purpose changed (master, 2026-10-14):** this is now a personal learning project, not a competition entry. Models must be open-source or free; the open-weight Bedrock models used here qualify. Nothing below depends on the submission rules.
+
+**Done (done-when met):**
+- **500 pilot scripts** in `data/w2/scripts.jsonl`, 0 rejects. All 500 re-parse through `w3/probe.py:parse` → `validate.check_record` with 0 SPEC §2 failures, checked independently after generation.
+- **Generator code:** `w2/banks.py` (entity banks + verbaliser), `w2/gen.py` (design, prompts, archived Bedrock calls, checks, repair turns), `w2/report.py` (bake-off, coverage, review list). Self-checks: `uv run --no-project python w2/banks.py`; `gen.py` and `report.py` run asserts before their main.
+- **Coverage report:** above.
+
+**Measured:**
+- First-take pass rate: 65%.
+- Pass rate after 5 takes: 88%. After the repair turns: 100%.
+- 995 calls for the 500 kept scripts, $1.83.
+
+**Declared models and data (§10 R2):**
+- Generator: DeepSeek-V3.2 (MIT weights) on Amazon Bedrock ap-south-1 (`deepseek.v3.2`).
+- Bake-off only: Qwen3 235B A22B 2507, gpt-oss-120b and Mistral Large 3, all Apache-2.0.
+- No closed model and no Sarvam API.
+- IndicVoices transcripts (W4 pool) were used only as a comparison reference; none of their text is in the scripts.
+- W6's `qa.py` was used only as a checker.
+
+**Spend (real, from the archived token usage at the Pricing-API rates):**
+- W2 total: **$5.19** for 2,887 Bedrock calls. This session: $1.89 (1,021 calls).
+- Included in the total are **886 orphaned calls ($1.59)** from the dead session's last run. Their prompts are not ones the committed generator produces: the cells differ (checked against `c8a840b`). INFERRED: that run used uncommitted code. They are archived but unused.
+- No SageMaker.
+- AWS credits (`data/master/credits.sh`): usage $1.98, NET $0.00, so credits cover everything.
+- The W2 spend ledger (`archive/spend/w2/`) lacked 1,328 markers for calls archived before the ledger existed. I wrote them from the archived metadata, which is `archive.backfill` restricted to stream w2.
+  - `spent('w2')` now reads ₹1,726 recorded. That figure is an upper bound or estimate; the real cost is ₹457.
+  - `gen.CAP_INR` subtracts the measured overcount, so the cap still means ≈ $15 real.
+  - Master: other streams may still need `archive.backfill()`.
+
+**Blockers:** none.
+
+**Handoffs:**
+- **W3:**
+  - Render `data/w2/scripts.jsonl` in place of `data/w3/probe.jsonl`: same fields, `pid` = `w2-NNNNN`.
+  - Render `tts_dev`. Pick a voice of the script's `gender`.
+  - Set `source.corpus = "w2-scripts-v1"`.
+  - Expect ≈ 3.4 h of audio.
+  - 258 scripts have digit strings and 185 have spelled acronyms: budget re-renders for those (your 85–95% hit rate).
+- **W6:**
+  - Translate `hi_text`. The entity references are `entity_spans[].value` and `corrections[].value`; a `retracted` span must not survive as fact.
+  - `hi_numbers` could add three conventions to match these scripts: ओ = 0 in English clock and digit runs (एट ओ वन = 8:01), English year pairs (ट्वेंटी ट्वेंटी सेवन = 2027), and एक before बजे or a month as a number.
+- **W2 bulk run (next):**
+  - Use a new design seed (e.g. `bulk-v1`). Never change the `pilot-v1` cells: record IDs are frozen once rendered.
+  - Before it, three prompt or design fixes are worth the cost:
+    1. Put "English clause in Devanagari inside one {..|..}" into the heavy instruction (heavy first-take pass was 12%; 42% within 5 takes).
+    2. Enforce the long band, or relax it to what the model writes.
+    3. Cap lakh/crore amounts in small-purchase scenarios.
+
+**The one list for Harsh (optional, ≈ 10 min):** `data/w2/review.tsv`, 20 rows.
+- It has 10 pilot scripts and 10 IndicVoices transcripts of similar length, shuffled. Mark each real/generated and natural 1–3.
+- The answers are in `review_key.tsv`; don't open it first.
+- No automatic proxy covers this. Number spelling and values are covered by the W6 round trip above, so the earlier 118-row spelling section is gone.
+
+**Disk:** `data/w2` is 9.3 MB. No model weights or caches downloaded.

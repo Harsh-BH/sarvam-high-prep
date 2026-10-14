@@ -8,6 +8,7 @@ Naturalness proxies are computed on hi_text the same way for scripts and for rea
 lexicon of words the generators marked as English in at least 2 scripts: a lower bound, the same for both sides.
 """
 import json
+import re
 import statistics as st
 import sys
 from collections import Counter
@@ -36,10 +37,15 @@ def toks(text):
 
 
 def lexicon(recs):
-    seen = Counter()
+    """Words marked English in >= 2 scripts and in at least half of all their occurrences: the LLM sometimes wraps a
+    Hindi word with its translation ({पैसे|money}), which must not make पैसे "English" everywhere."""
+    seen, marked, total = Counter(), Counter(), Counter()
     for r in recs:
-        seen.update({w for e in r.get("en_words", []) for w in e.split()})
-    return {w for w, c in seen.items() if c >= 2} - STOP - NUMISH
+        ws = [w for e in r.get("en_words", []) for w in e.split()]
+        seen.update(set(ws))
+        marked.update(ws)
+        total.update(toks(r.get("hi_text", "")))
+    return {w for w, c in seen.items() if c >= 2 and marked[w] >= total[w] / 2} - STOP - NUMISH
 
 
 def style(texts, lex):
@@ -189,6 +195,10 @@ def coverage():
     gm = sum(sum(r["gender_marks"]) > 0 for r in recs)
     print(f"Estimated audio: {hours:.2f} h at one render per script ({gen.S_PER_CHAR} s/char, W3's median). "
           f"{gm}/{len(recs)} scripts carry a first-person gender marker the voice must match.\n")
+    print("#### Entity values: banks.py's verbaliser vs W6's independent Hindi number parser (w6/qa.py:hi_numbers)\n")
+    agree = roundtrip(recs)
+    print(table([[t, ok + no, ok, ", ".join(ex)] for t, (ok, no, ex) in sorted(agree.items())],
+                ["type", "given spans with a number", "W6 parse == value", "disagreements (value: spoken → parsed)"]) + "\n")
     lex = lexicon(recs)
     print("#### Naturalness vs IndicVoices, and diversity\n")
     s, ivs = style([(r["hi_text"], r["sentences"]) for r in recs], lex), style(iv_texts(), lex)
@@ -197,18 +207,40 @@ def coverage():
     print(table([list(d.values()) + [f"{unmarked(recs, lex):.1f}"]], list(d) + ["unmarked English %"]))
 
 
+def roundtrip(recs):
+    """Every given numeric entity: does W6's parser (written independently) read back the value banks.py meant?
+    -> {type: [agree, disagree, up to 3 examples]}. Times compare on a 12 h clock (the parser has no day parts)."""
+    sys.path.insert(0, str(gen.ROOT / "w6"))
+    import qa
+    out = {}
+    for r in recs:
+        for sp in r["entity_spans"]:
+            v, t = sp["value"], sp["type"]
+            if not (sp["given"] and t in ("amount", "number", "date", "time", "phone", "account", "id") and re.search(r"\d", v)):
+                continue
+            p = qa.hi_numbers(sp["text"] + " है")  # a word after it: a final दो would otherwise read as the verb "give"
+            if t == "time":
+                h, m = map(int, v.split(":"))
+                want, got = (h % 12, m), (tuple(p) if len(p) == 2 else (p[0], round(p[0] % 1 * 60)) if len(p) == 1 else p)
+                got = (int(got[0]) % 12, int(got[1])) if len(got) == 2 else got
+            elif t in ("phone", "account", "id"):
+                want, got = "".join(re.findall(r"\d", v)), "".join(x if isinstance(x, str) else str(int(x)) for x in p)
+            else:
+                want, got = [float(x) for x in re.findall(r"\d+(?:\.\d+)?", v)], p
+            o = out.setdefault(t, [0, 0, []])
+            o[want != got] += 1
+            if want != got and len(o[2]) < 3:
+                o[2].append(f"{v}: {sp['text']} → {got}")
+    return out
+
+
 def review():
-    """data/w2/review.tsv: Harsh's one optional list (≈15 min). A: every Hindi number word and fraction pattern the
-    verbaliser can emit (a typo here would be in every script). B: 10 pilot scripts and 10 IndicVoices transcripts
-    of similar length, shuffled; mark each real/generated and natural 1-3."""
+    """data/w2/review.tsv: Harsh's one optional list (≈10 min): 10 pilot scripts and 10 IndicVoices transcripts of
+    similar length, shuffled; mark each real/generated and natural 1-3. Number spelling and values need no ears:
+    `coverage` round-trips every entity value through W6's independent parser."""
     import random
-    import banks
-    rows = [("A", f"{i}", w, "spelling ok? (y/fix)") for i, w in enumerate(banks.H)]
     r = random.Random(0)
-    for f in ("lakh_crore", "frac", "small", "time", "date", "idcode"):
-        for i in range(3):
-            e = banks.NUMFORMS[f](random.Random(f"review{f}{i}"), r.choice(banks.DOMAINS))
-            rows.append(("A", e.value, gen.dev(e.text), "says this value? (y/fix)"))
+    rows = []
     recs = load(DATA / "scripts.jsonl")
     ivs = [t for t, _ in iv_texts() if 45 <= len(t.split()) <= 90]
     blind = [("gen", x["hi_text"]) for x in r.sample(recs, 10)] + [("iv", t) for t in r.sample(ivs, 10)]
@@ -222,5 +254,8 @@ def review():
 
 if __name__ == "__main__":
     assert toks("मैं मैं ठीक हूँ।") == ["मैं", "मैं", "ठीक", "हूँ"]
+    assert roundtrip([{"entity_spans": [{"value": "8:01", "type": "time", "given": True, "text": "एट ओ वन"},
+                                        {"value": "375000", "type": "amount", "given": True, "text": "पौने चार लाख रुपये"}]}])["amount"][:2] == [1, 0]
+    assert lexicon([{"en_words": ["पैसे", "फ़ोन"], "hi_text": "पैसे फ़ोन पैसे पैसे।"}] * 2) == {"फ़ोन"}
     assert style([("मैं मैं उम्म ठीक हूँ।", ["मैं मैं उम्म ठीक हूँ।"])], set())["repeats"] == 20.0
     {"bake": bake, "coverage": coverage, "review": review}[sys.argv[1]]()
