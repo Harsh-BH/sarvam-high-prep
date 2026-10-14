@@ -13,6 +13,7 @@ CACHE=/home/harsh1/github-repos/sarvam-high-prep/data/cache
 LOG=$D/chains/$tag.tsv SLOTS=4  # the account allows 10 spot instances across ALL training jobs, shared
 mkdir -p "$D/chains"
 touch "$LOG"
+echo "$prev" > "$D/chains/$tag.cut"
 set -a; . /home/harsh1/github-repos/sarvam-high-prep/.env; set +a
 cut_audio="$CACHE/audio/${prev//\//_}_audio"  # run.run_local's shared audio cache for this cut run
 
@@ -35,7 +36,6 @@ run_step() {  # run_step <stage> local|sm <instance> [-- params]; chains $prev -
     fi
     echo "$out" | tail -5 > "$D/chains/$tag.$stage.last"
     if [ $rc -eq 0 ]; then break; fi
-    if [ "$where" = sm ] && grep -q ResourceLimitExceeded <<< "$out"; then say "$stage: quota full, retry in 5 min"; sleep 300; continue; fi
     say "$stage FAILED (rc $rc): $(echo "$out" | tail -3 | tr '\n' ' ')"; return 1
   done
   printf '%s\t%s\tok\n' "$stage" "$rid" >> "$LOG"

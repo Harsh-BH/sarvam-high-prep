@@ -6,8 +6,11 @@
 
     uv run scale/real/report.py heldout stages/cut/<run>      # exit 1 if any record is held out (w8c) or IV-valid
     uv run scale/real/report.py ids stages/cut/<run> ...      # append the runs' ids_new.tsv rows to w1/ids.tsv
+    uv run scale/real/report.py stats                         # every chain in data/scale-real/chains/: hours per stage,
+                                                              # rejects by rule, SageMaker + Bedrock cost
 """
-import json, sys
+import collections as C, json, sys
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -16,6 +19,12 @@ import s3 as store  # noqa: E402
 from split import is_heldout  # noqa: E402
 
 IDS = ROOT / "w1/ids.tsv"
+CHAINS = Path("/home/harsh1/github-repos/sarvam-high-prep/data/scale-real/chains")
+STAGES = ["cut", "audio_qc", "dedupe", "transcribe", "align", "asr_check", "translate"]
+# USD per instance-hour, SageMaker training on-demand, ap-south-1 (W7's figures; c5.xlarge = half of c5.2xlarge).
+# Spot cost = BillableTimeInSeconds x this price.
+SM_USD_H = {"ml.m5.large": 0.121, "ml.c5.xlarge": 0.204, "ml.c5.2xlarge": 0.408}
+BEDROCK_USD_M = {"mistral.mistral-large-3-675b-instruct": (0.59, 1.76), "openai.gpt-oss-120b-1:0": (0.18, 0.71)}  # w6
 
 
 def records(run):
@@ -47,11 +56,60 @@ def append_ids(runs):
     print(f"w1/ids.tsv: +{len(new)} rows from {len(runs)} runs")
 
 
+def chains():
+    """-> {tag: {stage: run}} for the ok steps; the cut run is the chain's input (tsv name: <tag>.tsv, cut in <tag>.cut)."""
+    out = {}
+    for p in sorted(CHAINS.glob("*.tsv")):
+        runs = {"cut": (CHAINS / f"{p.stem}.cut").read_text().strip()}
+        runs.update({st: f"stages/{st}/{r}" for st, r, ok in (l.split() for l in open(p)) if ok == "ok"})
+        out[p.stem] = runs
+    return out
+
+
+def stats():
+    ch, sm = chains(), store.session().client("sagemaker")
+    hours, recs, rules, usd = C.Counter(), C.Counter(), C.Counter(), C.Counter()
+    complete = []
+    for tag, runs in ch.items():
+        for st in STAGES:
+            if st not in runs:
+                break
+            rs = records(runs[st])
+            hours[st] += sum(r["duration"] for r in rs) / 3600
+            recs[st] += len(rs)
+            for l in (store.get(f"{runs[st]}/rejects.jsonl") or b"").decode().splitlines():
+                if l.strip():
+                    rules[(st, json.loads(l).get("rule"))] += 1
+            job = "sarvam-" + st.replace("_", "-") + "-" + runs[st].rsplit("/", 1)[1]
+            try:
+                d = sm.describe_training_job(TrainingJobName=job[:63].rstrip("-"))
+                usd["sagemaker"] += (d.get("BillableTimeInSeconds") or 0) / 3600 * SM_USD_H[d["ResourceConfig"]["InstanceType"]]
+            except sm.exceptions.ClientError:
+                pass  # a local run
+            if st == "translate":
+                complete.append(runs[st])
+                keys = [k + ".json" for r in rs for k in r.get("_archive", {}).get("translate", [])]
+                for m in ThreadPoolExecutor(32).map(lambda k: json.loads(store.get(k)), keys):
+                    pi, po = BEDROCK_USD_M[m["request"]["model"]]
+                    u = m["response"]["usage"]
+                    usd["bedrock"] += (u["inputTokens"] * pi + u["outputTokens"] * po) / 1e6
+    print("| Stage | Records | Hours |\n|---|---|---|")
+    for st in STAGES:
+        print(f"| {st} | {recs[st]} | {hours[st]:.3f} |")
+    print("\nRejects by rule: " + ", ".join(f"{st}/{r} {n}" for (st, r), n in sorted(rules.items())))
+    total = sum(usd.values())
+    print(f"\nCost (list price): SageMaker ${usd['sagemaker']:.2f}, Bedrock ${usd['bedrock']:.2f}, total ${total:.2f}; "
+          f"per kept hour ${total / max(hours['translate'], 1e-9):.2f}")
+    print("\nComplete runs (assembly input):\n" + "\n".join(complete))
+
+
 if __name__ == "__main__":
     cmd, args = sys.argv[1], sys.argv[2:]
     if cmd == "heldout":
         sys.exit(0 if all([heldout(r) for r in args]) else 1)
     elif cmd == "ids":
         append_ids(args)
+    elif cmd == "stats":
+        stats()
     else:
         sys.exit(__doc__)
