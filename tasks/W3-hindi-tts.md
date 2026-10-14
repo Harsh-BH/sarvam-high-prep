@@ -448,3 +448,62 @@ First takes (500), final QA rules:
 6. **Bulk run** (when W2's bulk scripts land):
    - same command, `--engine omnivoice --max-takes 4`, g4dn.2xlarge;
    - ≈ $0.74 per kept audio hour and ≈ 0.7 wall-hours per kept hour on one instance. 100 kept hours ≈ $75 and ≈ 70 h on one g4dn.2xlarge, well over this stream's $15 cap. A raise and sharding across instance types (each has quota 1) are needed: the stage has no `--shard i/n` yet (add it then).
+
+## Spend log, round 2 (AWS SageMaker, W3 cap $15)
+
+| Job | Instance | Billed s | $/h | $ |
+|---|---|---|---|---|
+| OmniVoice smoke (3 probes) | g4dn.2xlarge | 354 | 1.035 | 0.10 |
+| duplicate smoke, stopped while downloading | g4dn.xlarge | 36 | 0.811 | 0.01 |
+| OmniVoice pace variants (60 W2 scripts × 2) | g4dn.2xlarge | 1,663 | 1.035 | 0.48 |
+| pilot attempt 1 (stopped) | g4dn.2xlarge | 756 | 1.035 | 0.22 |
+| pilot attempt 2 (failed: key collision) | g4dn.2xlarge | 345 | 1.035 | 0.10 |
+| **pilot, final** | g4dn.2xlarge | 8,831 | 1.035 | **2.54** |
+| re-judge (archive only) | c5.xlarge | 420 | 0.204 | 0.02 |
+| OmniVoice probe bench (final config) | g4dn.2xlarge | 942 | 1.035 | 0.27 |
+| **Total** | | 13,347 | | **$3.74 of $15** |
+
+- Eight other submissions waited for capacity and were stopped before an instance started, so nothing was billed. Spot g4dn.xlarge never got capacity in 3 h.
+- `data/master/credits.sh` on 2026-10-14: "usage $2.03, credits $-2.03, NET $-0.00 → credits covering everything" (Cost Explorer lags ≈ 24 h).
+- Sarvam: ₹0 this round. S3: ≈ 1.5 GB added (takes, kept audio, stage runs), well under $0.1/month.
+
+## Status — 2026-10-14 (round 2)
+
+**Done:**
+1. **Survey of open Hindi TTS** (21 engines; table above). Measured on the probe set with the round-1 QA: OmniVoice (11% reject, final config) and pocket-tts-hindi (21%), next to round 1's Bulbul 18%, Magpie 11% and Parler 40%. Also a paired OmniVoice pace experiment on 60 W2 scripts.
+2. **`tts` stage** (`w3/tts.py`, `w3/tts_bench.py`, `w3/voices.py`; self-check `uv run w3/test_tts.py` covers retakes, crash-resume without re-render, write-once archive, engine rotation, bench, archive-only re-judge, the listening list). Registered in `pipeline/run.py` as `tts` and `tts_bench`. Runs on SageMaker via `run.py --sm` (GPU and CPU both verified) and on the laptop under the GPU flock (pocket bench).
+3. **Pilot on SageMaker:** `stages/tts/20261014T163810Z-ddf6f86` (**`tts` LATEST**): **484/500 W2 scripts kept, 3.439 h, 31 voices (13 f, 18 m), gender-matched 484/484, 0 validator violations**. First-take QA reject 13%; 16 scripts burned. **$2.88** of GPU/CPU for the pilot runs ($0.74–0.84 per kept hour).
+4. **Voice bank:** 31 (+ 40 first-bank) IndicVoices references, write-once in `raw/_voices/`, with licence sidecars and the consent caveat.
+5. **QA fixes,** measured on these takes: ASR spelling equivalences (`qa.SAME`, ऐ→ए fold). Round-1 verdicts move by 2/382.
+
+**Measured headline:** OmniVoice cloning at its own pace beats forcing a conversational pace (QA reject 25% vs 42%, agreed skips 0% vs 23%, paired n = 60). The voice bank's pace filter brought pilot first-take rejects from 25% (slow first bank) down to 13% at ≈ 10 chars/s.
+
+**Spend:** $3.74 of the $15 AWS cap (table above). No API spend.
+
+**Blockers / risks:**
+- **GPU capacity in ap-south-1 is scarce.** Jobs waited 5–60 min for g4dn/g5/g6, and spot never started in 3 h. The bulk run needs sharding across instance types (quota 1 each) and patience.
+- IndicF5 needs Harsh's "Agree" click on HF and an S3 mirror for jobs. Not needed now; OmniVoice is better on paper (SpeechArena puts IndicF5 last).
+
+**Handoffs:**
+- **W5:** align `stages/tts/20261014T163810Z-ddf6f86` (484 clips). Please report **filler durations**: 251 scripts have उम्म/हम्म and no ASR can verify them. Two filler clips are also on Harsh's list.
+- **W6:** translate the same run. Each record carries `_w2` (the script minus `_gen`), so `entity_spans[].value`, `corrections` and `retracted` are there.
+- **W7:**
+  - Synthetic audio rebuilds by copying `_archive.tts` = `archive/tts/<id>-<take key[:16]>.wav`, never by re-synthesising (6/6 sampled: archive = stage audio = sidecar sha256).
+  - Burned ids: `rejects.jsonl` of that run (16).
+  - Orphan objects `archive/tts/rec-4000{50,51,52,54,55,56,58,59,60,62}.wav` are from abandoned runs and referenced by no record.
+  - **Flag these records NC and not-consented-for-cloning**; never release them.
+  - SageMaker leaves `*.sagemaker-uploaded` marker files next to every output in `stages/<stage>/<run>/` (checkpoint sync), e.g. 484 extra keys under `audio/`. Harmless to `validate.py`, but filter them in anything that lists a run's files.
+- **W2 (bulk scripts):**
+  - Spell English "I" as **आई** (38 agreed ASR rewrites of आइ) and भाई not भई.
+  - Keep scripts ≤ ~400 characters: 430–440-character scripts ran past 60 s with slower voices.
+  - Rare proper nouns (मेदांता, ल्हाकपा, फ़ोर्टिस) fail every take. Prefer names a Hindi speaker would recognise, or accept the loss.
+  - Single-letter fillers aren't the problem now; उम्म/हम्म still need W5's duration check.
+- **W1:** more wideband female IndicVoices speakers with clean 6–11 s segments at 8–14 chars/s would grow the voice bank (13 women today).
+- **Master:** `run.py --run <id>` plus a pre-seeded `stages/<stage>/<id>/_ckpt/` is a handy way to re-judge a stage on SageMaker from cached intermediates (used here). Bulk TTS at ≈ $0.74 per kept hour needs a cap raise if synthetic hours go above ~15.
+
+**The one list for Harsh (≈ 10 min, optional where noted):** `data/w3/listen/listen.tsv` + `data/w3/listen/audio/` (33 clips, 8.2 min of audio).
+- Clips 1–31: one per voice. **Native Indian Hindi accent? Is the voice the stated gender?** Write y/n in `answer`. If the first ~10 are all fine, the rest is optional: every voice is cloned from a native speaker, so accent problems would most likely be per-engine, not per-voice.
+- Clips 32–33: is the filler audible where the transcript has it?
+- Optional, only if IndicF5 is wanted later: click "Agree" on huggingface.co/ai4bharat/IndicF5.
+
+**Disk:** `data/w3` = 505 MB, within the 1.5 GB budget. pocket-tts weights (219 MB) deleted from the shared HF cache. No OmniVoice or VoxCPM2 weights were ever downloaded locally.
