@@ -80,6 +80,26 @@ def main():
     ids = [json.loads(l)["id"] for l in f.objects["stages/t/R4/records.jsonl"].decode().splitlines()]
     assert sorted(ids) == ["rec-000001", "rec-000002", "rec-000003"] and len(ids) == 3
 
+    # a resumed run stays the same run: other input or params are refused, never mixed into its output
+    for other in ({"in_records": "stages/prev/R9/records.jsonl"}, {"params": ["--x"]}):
+        a = {"in_records": "stages/prev/R0/records.jsonl", "params": [], **other}
+        try:
+            run.run_local("t", spec, a["in_records"], "stages/cut/R0/audio/", a["params"], run="R4", cache=d / "cache",
+                          audio_cache=d / "audio", s3=f, validate_cmd=okv)
+            raise AssertionError(f"resume with {other} not refused")
+        except SystemExit:
+            pass
+
+    # --audio-from default: the audio the input run itself read, not whatever cut's LATEST is now
+    f.objects["stages/cut/LATEST"] = b"R6"
+    assert run.audio_of("stages/t/R1", f) == "stages/cut/R0"
+    assert run.audio_of("stages/prev/R0", f) == "stages/cut/R6"  # no run.json (seeded by hand): cut's LATEST
+    run.STAGES["mk"] = {"makes_audio": True}
+    try:
+        assert run.audio_of("stages/mk/R1", f) == "stages/mk/R1"
+    finally:
+        del run.STAGES["mk"]
+
     # input audio is cached outside `cache` (on SageMaker `cache` is the checkpoint dir, synced to S3)
     assert not any((d / "cache").rglob("*.wav")) and (d / "audio").exists()
 

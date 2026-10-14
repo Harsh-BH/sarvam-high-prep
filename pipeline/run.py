@@ -43,6 +43,14 @@ def resolve(ref, s3=None):
     return f"stages/{ref}/{r}"
 
 
+def audio_of(src, s3=None):
+    """Default --audio-from: `src` itself if its stage makes audio, else the audio `src` read (its run.json), else cut's LATEST."""
+    if STAGES.get(src.split("/")[1], {}).get("makes_audio"):
+        return src
+    meta = store.get(f"{src}/run.json", s3)
+    return json.loads(meta)["audio_from"].rstrip("/").removesuffix("/audio") if meta else resolve("cut", s3)
+
+
 def _count(p):
     return sum(1 for l in open(p) if l.strip()) if p.exists() else 0
 
@@ -52,6 +60,10 @@ def run_local(stage, spec, in_records, audio_prefix, params, *, run, cache=CACHE
     inp, out = work / "in" / "records.jsonl", work / "out"  # out/ survives a crash: the stage resumes into it
     inp.parent.mkdir(parents=True, exist_ok=True)
     out.mkdir(parents=True, exist_ok=True)
+    args, pinned = {"input": in_records, "audio_from": audio_prefix, "params": params}, work / "args.json"
+    if pinned.exists() and json.loads(pinned.read_text()) != args:
+        raise SystemExit(f"stages/{stage}/{run} was started with {pinned.read_text()}; resume it with those, or start a new run")
+    pinned.write_text(json.dumps(args))
     for p in (out / "records.jsonl", out / "rejects.jsonl"):
         if p.exists() and not (b := p.read_bytes()).endswith(b"\n"):
             p.write_bytes(b[:b.rfind(b"\n") + 1])  # a crash tore the last line: drop it, the stage redoes that id
@@ -98,7 +110,7 @@ def main():
     a = ap.parse_args(argv)
     spec = STAGES[a.stage]
     src = resolve(a.inp)
-    audio_src = resolve(a.audio_from) if a.audio_from else (src if STAGES.get(src.split("/")[1], {}).get("makes_audio") else resolve("cut"))
+    audio_src = resolve(a.audio_from) if a.audio_from else audio_of(src)
     run = a.run or run_id(git_sha(), datetime.now(timezone.utc))
     if a.sm:
         import sm  # Task 4

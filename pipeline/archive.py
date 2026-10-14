@@ -44,16 +44,20 @@ def _upload(service, key, meta_bytes, payload, s3=None):
     return store.put_once(f"archive/api/{service}/{key}.json", meta_bytes, s3) and bin_won
 
 
+def _flush_one(p, s3=None):
+    """Upload one spool entry (<spool>/<service>/<key>.json [+ .bin]), then drop it. -> _upload's result."""
+    b = p.with_suffix(".bin")
+    won = _upload(p.parent.name, p.stem, p.read_bytes(), b.read_bytes() if b.exists() else None, s3)
+    p.unlink(missing_ok=True)  # another process may flush the same entry
+    b.unlink(missing_ok=True)
+    return won
+
+
 def flush_spool(s3=None, spool=SPOOL):
-    n = 0
-    for p in sorted(Path(spool).glob("*/*.json")):
-        service, key = p.parent.name, p.stem
-        b = p.with_suffix(".bin")
-        _upload(service, key, p.read_bytes(), b.read_bytes() if b.exists() else None, s3)
-        p.unlink()
-        b.unlink(missing_ok=True)
-        n += 1
-    return n
+    paths = sorted(Path(spool).glob("*/*.json"))
+    for p in paths:
+        _flush_one(p, s3)
+    return len(paths)
 
 
 def archive_call(service, request, call, *, stream, inr, cap_inr, s3=None, spool=SPOOL, retries=4, sleep=time.sleep):
@@ -61,9 +65,14 @@ def archive_call(service, request, call, *, stream, inr, cap_inr, s3=None, spool
     hit = _load(service, key, s3)
     if hit is not None:
         return hit
-    if spent(stream, s3) + inr > cap_inr:
-        raise SpendCapError(f"{stream}: {spent(stream, s3):.2f} + {inr:.2f} INR > cap {cap_inr:.2f}")
+    d = Path(spool) / service
+    if (d / f"{key}.json").exists():  # paid for before a crash, never reached S3: archive it, don't pay again
+        _flush_one(d / f"{key}.json", s3)
+        return _load(service, key, s3)
     for attempt in range(retries + 1):
+        if spent(stream, s3) + inr > cap_inr:
+            raise SpendCapError(f"{stream}: {spent(stream, s3):.2f} + {inr:.2f} INR > cap {cap_inr:.2f}")
+        _spent[stream] += inr  # charged per attempt: a call can bill and still raise (timeout after the server finished)
         try:
             response, payload = call(request)
             break
@@ -74,13 +83,9 @@ def archive_call(service, request, call, *, stream, inr, cap_inr, s3=None, spool
     meta = json.dumps({"service": service, "request": request, "response": response, "stream": stream, "inr": inr,
                        "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                        "payload": f"{key}.bin" if payload is not None else None}, ensure_ascii=False).encode()
-    d = Path(spool) / service
     d.mkdir(parents=True, exist_ok=True)
     if payload is not None:
         (d / f"{key}.bin").write_bytes(payload)
     (d / f"{key}.json").write_bytes(meta)  # written last: its presence means the spool entry is complete
-    won = _upload(service, key, meta, payload, s3)
-    (d / f"{key}.json").unlink()
-    (d / f"{key}.bin").unlink(missing_ok=True)
-    _spent[stream] = spent(stream, s3) + inr
+    won = _flush_one(d / f"{key}.json", s3)
     return (response, payload) if won else _load(service, key, s3)

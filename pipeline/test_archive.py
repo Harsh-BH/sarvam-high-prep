@@ -36,13 +36,32 @@ def main():
 
     log3 = []  # retries: two failures, then success; one archive write
     archive.archive_call("bulbul", {**req, "take": 3}, caller(log3, fail_first=2), **kw)
-    assert len(log3) == 3
+    assert len(log3) == 3 and archive.spent("w3", f) == 7.5  # failed attempts may have billed: they count
 
-    try:  # cap: 4.5 spent, next 1.5 would exceed 5.0
+    try:  # cap: 7.5 spent, next 1.5 would exceed 5.0
         archive.archive_call("bulbul", {**req, "take": 4}, caller([]), **{**kw, "cap_inr": 5.0})
         raise AssertionError("cap not enforced")
     except archive.SpendCapError:
         pass
+
+    # a call that bills and then raises: the cap stops the retries (stream w9 starts at 0)
+    log9 = []
+    try:
+        archive.archive_call("bulbul", {**req, "take": 9}, caller(log9, fail_first=99), **{**kw, "stream": "w9", "cap_inr": 3.0})
+        raise AssertionError("retries ran past the cap")
+    except archive.SpendCapError:
+        pass
+    assert len(log9) == 2
+
+    # crash after a paid call, before S3: the re-run archives the spooled output instead of paying again
+    req7 = {**req, "take": 7}
+    k7 = archive.request_key(req7)
+    (spool / "bulbul").mkdir(exist_ok=True)
+    (spool / "bulbul" / f"{k7}.bin").write_bytes(b"TAKE1")
+    (spool / "bulbul" / f"{k7}.json").write_text(json.dumps({"response": {"take": 1}, "payload": f"{k7}.bin", "stream": "w3", "inr": 1.5}))
+    log7 = []
+    assert archive.archive_call("bulbul", req7, caller(log7), **{**kw, "cap_inr": 99}) == ({"take": 1}, b"TAKE1") and log7 == []
+    assert f.objects[f"archive/api/bulbul/{k7}.bin"] == b"TAKE1" and not any((spool / "bulbul").iterdir())
 
     # race: another process archived first; we must return ITS response
     req5 = {**req, "take": 5}
