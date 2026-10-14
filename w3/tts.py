@@ -7,6 +7,7 @@
     uv run w3/tts.py --in SCRIPTS.jsonl --audio-dir DIR --out OUT_DIR [--engine E] [--max-takes N] [--corpus C] [--bench]
     uv run w3/tts.py alloc SCRIPTS.jsonl          # record ids for new scripts -> w3/ids.tsv; commit before any run
     uv run w3/tts.py upload SCRIPTS.jsonl STAGE   # -> stages/STAGE/<run>/records.jsonl + LATEST, for run.py --in STAGE
+    uv run w3/tts.py report SCRIPTS.jsonl DIR...  # bench tables (first takes) from DIR/takes.jsonl
 
 Input: W2 scripts (tasks/W2-scripts.md: pid, tts_dev, hi_text, sentences, entities, en_words, chars, gender).
 --audio-dir is unused: scripts have no audio. Per script: a voice of the script's gender (stable hash of pid, from
@@ -399,11 +400,53 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
                     f.write(json.dumps({"id": rid, "stage": "tts", "rule": "qa", "detail": detail}, ensure_ascii=False) + "\n")
 
 
+def report(scripts, dirs):
+    """Markdown tables from takes.jsonl files (first takes only, so engines compare like round 1): by engine, by voice."""
+    ents = {x["pid"]: [qa.canon(e) for e in x["entities"]] for x in scripts}
+    rows = [r for d in dirs for r in jsonl(Path(d) / "takes.jsonl") if r["take"] == 1]
+
+    def pct(a, b):
+        return f"{100 * a / b:.1f}%" if b else "–"
+
+    def table(groups):
+        print("| group | takes | audio h | CER ic p50/p90 | entity hit | number-entity hit | English-span hit | agreed skip "
+              "| agreed insert | QA reject (r1 rules) | reject incl. 1 subst. | s/char p50 | wall s per audio s |")
+        print("|" + "---|" * 13)
+        for name, g in groups:
+            ic = [r["cer"].get("ic", np.nan) for r in g]
+            ne = sum(1 for r in g for e in ents[r["pid"]] if qa.num_runs(e))
+            nm = sum(1 for r in g for e in r["ent_miss"] if qa.num_runs(e))
+            en_n, en_m = sum(r["ent_n"] for r in g), sum(len(r["ent_miss"]) for r in g)
+            sp_n, sp_m = sum(r["en_n"] for r in g), sum(len(r["en_miss"]) for r in g)
+            r1 = sum(1 for r in g if set(r["why"]) - {NO_SUBS})
+            dur = sum(r["dur"] for r in g)
+            print(f"| {name} | {len(g)} | {dur / 3600:.2f} | {np.nanmedian(ic):.3f}/{np.nanpercentile(ic, 90):.3f} | "
+                  f"{pct(en_n - en_m, en_n)} | {pct(ne - nm, ne)} | {pct(sp_n - sp_m, sp_n)} | "
+                  f"{pct(sum(bool(r['skips']) for r in g), len(g))} | {pct(sum(bool(r['adds']) for r in g), len(g))} | "
+                  f"{pct(r1, len(g))} | {pct(sum(r['verdict'] == 'reject' for r in g), len(g))} | "
+                  f"{np.median([r['spc'] for r in g]):.3f} | {sum(r['secs'] for r in g) / dur:.2f} |")
+    engines = sorted({r["engine"] for r in rows})
+    print("\n**By engine**\n")
+    table([(e, [r for r in rows if r["engine"] == e]) for e in engines])
+    print("\n**By voice**\n")
+    table([(f"{e} {v} ({g})", [r for r in rows if r["engine"] == e and r["voice"] == v])
+           for e in engines for v, g in sorted({(r["voice"], r["gender"]) for r in rows if r["engine"] == e})])
+    why = {}
+    for r in rows:
+        for w in r["why"]:
+            k = (r["engine"], re.sub(r"[\d.]+$", "", w))
+            why[k] = why.get(k, 0) + 1
+    print("\n**Reject reasons** (takes can have several): " + "; ".join(
+        f"{e}: " + ", ".join(f"{w} {n}" for (e2, w), n in sorted(why.items(), key=lambda x: -x[1]) if e2 == e) for e in engines))
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "alloc":
         print(f"{alloc(jsonl(argv[1]))} ids added to {IDS}")
         return
+    if argv and argv[0] == "report":
+        return report(jsonl(argv[1]), argv[2:])
     if argv and argv[0] == "upload":
         print(f"stages/{argv[2]}/{upload(argv[1], argv[2])}: uploaded, LATEST moved")
         return
