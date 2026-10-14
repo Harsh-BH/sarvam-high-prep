@@ -177,12 +177,84 @@ def load_parler():
     return synth
 
 
+def ref_audio(v):
+    """A reference clip as (float32 mono array, sample rate)."""
+    import soundfile as sf
+    x, sr = sf.read(ref_path(v), dtype="float32")
+    return x, sr
+
+
+def snapshot(engine):
+    """The engine's HF weights at the pinned revision (ungated: a job has no HF token)."""
+    from huggingface_hub import snapshot_download
+    return snapshot_download(ENGINES[engine]["model"], revision=ENGINES[engine]["rev"])
+
+
+def load_omnivoice():
+    """OmniVoice (k2-fsa; code Apache-2.0, weights CC BY-NC): zero-shot cloning from a 3-10 s reference + transcript."""
+    need("omnivoice==0.2.1")
+    import torch
+    from omnivoice import OmniVoice
+    m = OmniVoice.from_pretrained(snapshot("omnivoice"), device_map="cuda:0", dtype=torch.float16)
+    prompts = {}
+
+    def synth(text, v, seed):
+        if v["voice"] not in prompts:
+            x, sr = ref_audio(v)
+            prompts[v["voice"]] = m.create_voice_clone_prompt(ref_audio=(torch.from_numpy(x), sr), ref_text=v["ref_text"])
+        seed_all(seed)
+        return m.generate(text=text, language="hi", voice_clone_prompt=prompts[v["voice"]])[0], 24000
+    return synth
+
+
+def load_voxcpm2():
+    """VoxCPM2 (OpenBMB, Apache-2.0): cloning with the reference's transcript ("ultimate cloning"), 48 kHz out."""
+    need("voxcpm==2.0.3")
+    from voxcpm import VoxCPM
+    m = VoxCPM.from_pretrained(snapshot("voxcpm2"), load_denoiser=False)
+
+    def synth(text, v, seed):
+        seed_all(seed)
+        ref = ref_path(v)
+        wav = m.generate(text=text, prompt_wav_path=ref, prompt_text=v["ref_text"], reference_wav_path=ref,
+                         cfg_value=2.0, inference_timesteps=10)
+        return wav, m.tts_model.sample_rate
+    return synth
+
+
+def load_pocket():
+    """pocket-tts-hindi (Saryps Labs, CC BY 4.0; runtime MIT): 110M, cloning from a reference clip, CPU-fast.
+    Its config points at the repo's main branch, so the pinned revision is checked against main instead."""
+    need("pocket-tts==3.3.0")
+    from huggingface_hub import model_info
+    from pocket_tts import TTSModel
+    E = ENGINES["pocket"]
+    if model_info(E["model"]).sha != E["rev"]:
+        raise SystemExit(f"{E['model']} main moved off the pinned {E['rev']}: re-benchmark before using it")
+    m = TTSModel.load_model(config=f"hf://{E['model']}/config.yaml", eos_threshold=-1.0)  # the card's eval setting
+    states = {}
+
+    def synth(text, v, seed):
+        if v["voice"] not in states:
+            states[v["voice"]] = m.get_state_for_audio_prompt(ref_path(v))
+        seed_all(seed)
+        plain = " ".join(re.sub(r"[,।?!]", " ", text).split())  # trained without punctuation (card)
+        return m.generate_audio(states[v["voice"]], plain).float().numpy(), m.sample_rate
+    return synth
+
+
 def load_fake():
     """Self-check engine: a tone whose length follows the text. Never a record outside the test."""
     return lambda text, v, seed: (0.3 * np.sin(np.arange(int(0.09 * len(text) * RATE)) * 0.05), RATE)
 
 
 ENGINES = {
+    "omnivoice": {"model": "k2-fsa/OmniVoice", "rev": "c5fdb5ccb189668d56333f77ba2629f4cd7535f4", "clone": True,
+                  "load": load_omnivoice},
+    "voxcpm2": {"model": "openbmb/VoxCPM2", "rev": "32279effe8c19989596f05d353d1447f51d9e915", "clone": True,
+                "load": load_voxcpm2},
+    "pocket": {"model": "saryps-labs/pocket-tts-hindi", "rev": "6bff9c1e776bb90c68dd05c2467c62d1ecdf1b51", "clone": True,
+               "load": load_pocket},
     "parler": {"model": "ai4bharat/indic-parler-tts", "rev": "660bc53c", "clone": False, "load": load_parler},
     "fake": {"model": "w3-selfcheck-tone", "rev": "0", "clone": False, "load": load_fake},
 }
