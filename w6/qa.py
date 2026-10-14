@@ -22,7 +22,7 @@ _HI = """शून्य ज़ीरो जीरो|एक|दो दौ|त�
 |अट्ठानवे|निन्यानवे"""
 # English number words as spoken inside Hindi, written in Devanagari (SPEC R7)
 _HI_EN = {"वन": 1, "टू": 2, "थ्री": 3, "फ़ोर": 4, "फोर": 4, "फ़ाइव": 5, "फाइव": 5, "सिक्स": 6, "सेवन": 7, "एट": 8, "ऐट": 8,
-          "नाइन": 9, "टेन": 10, "इलेवन": 11, "ट्वेल्व": 12, "थर्टीन": 13, "फ़ोर्टीन": 14, "फोर्टीन": 14, "फ़िफ़्टीन": 15,
+          "नाइन": 9, "सेकंड": 2, "सेकेंड": 2, "टेन": 10, "इलेवन": 11, "ट्वेल्व": 12, "थर्टीन": 13, "फ़ोर्टीन": 14, "फोर्टीन": 14, "फ़िफ़्टीन": 15,
           "फिफ्टीन": 15, "सिक्सटीन": 16, "सेवनटीन": 17, "सेवेनटीन": 17, "एटीन": 18, "नाइनटीन": 19, "ट्वेंटी": 20,
           "ट्वेन्टी": 20, "थर्टी": 30, "फ़ोर्टी": 40, "फोर्टी": 40, "फ़िफ़्टी": 50, "फिफ्टी": 50, "सिक्सटी": 60,
           "सेवेंटी": 70, "सेवनटी": 70, "एटी": 80, "नाइनटी": 90}
@@ -147,7 +147,8 @@ _EN_TOK = re.compile(r"\d[\d,]*(?:\.\d+)?k?|[a-z]+(?:'[a-z]+)?")
 
 
 def en_numbers(en):
-    toks = _EN_TOK.findall(en.lower().replace("-", " "))
+    en = re.sub(r"\b(?:an?|one) (\w+) and a half\b", r"one and a half \1", en.lower())  # an hour and a half = डेढ़ घंटा
+    toks = _EN_TOK.findall(en.replace("-", " "))
     out, run, i = [], _Run(), 0
     while i < len(toks):
         t, nxt = toks[i], toks[i + 1:i + 4]
@@ -318,4 +319,5 @@ if __name__ == "__main__":
     assert e("the eighty-five lakh one is fine") == [8500000.0] and e("A B C four four seven three K") == ["4473"]
     assert e("one lakh one thousand") == [101000.0]
     assert neg_count(hi="पॉलिसी लैप्स न हो") == 1 and neg_count(hi="ठीक है न आप आइए") == 0 and neg_count(en="I don’t") == 1
+    assert e("it's been an hour and a half") == [1.5] and n("लेकिन सेकंड दिन ही") == [2.0] and e("on the second day") == [2.0]
     print("ok: qa")
