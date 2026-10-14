@@ -384,3 +384,17 @@ Same 60 W2 pilot scripts, same voice per script, take 1, QA as in the stage (rou
 
 - **ASR normalisation of colloquial forms looked like TTS substitutions.** On the first pilot takes, both ASRs agreed on these single-word "substitutions": ये→यह 5, पे→पर 5, मे→में 4, न→ना 1, ऐप→एप 1. A TTS reading पे does not say पर; both ASRs' language models standardise it. With "one agreed substitution → retake", such a script would fail every take and be lost, a bias *against* colloquial Hindi. `qa.SAME` now treats these pairs as one word, like same-value number spellings. On round 1's 382 renders it changes 0 verdicts.
 - The remaining agreed substitutions look like real TTS errors (प्यूमा→पीमा, मृणाल→निराल, शेड→सेट), and agreed skips are mostly digits inside digit strings plus short function words (है, मैं, का). INFERRED: TTS drops, since both ASRs agree and they heard repeated words fine elsewhere. Those rules stay.
+
+### Declarations, round 2 (§10 R2)
+
+| Used for | Model / tool | Revision | Licence |
+|---|---|---|---|
+| **Pilot TTS (record audio)** | OmniVoice, `k2-fsa/OmniVoice`; `omnivoice` 0.2.1 (PyPI) | `c5fdb5ccb189668d56333f77ba2629f4cd7535f4` | weights **CC BY-NC (NC)** per the card (no HF tag), training data incl. Emilia; code Apache-2.0 |
+| Bench TTS | pocket-tts-hindi, `saryps-labs/pocket-tts-hindi`; `pocket-tts` 3.3.0 | `6bff9c1e776bb90c68dd05c2467c62d1ecdf1b51` | CC BY 4.0; runtime MIT |
+| Voice references (cloned) | IndicVoices Hindi (AI4Bharat), 31 + 40 speakers | W1's local copies, offsets in each `raw/_voices/*.meta.json` | CC BY 4.0. **Consent caveat above** |
+| QA ASR 1 | IndicConformer 600M multilingual, RNNT (W4's S3 mirror in jobs) | `2a77d305038dfc502fd9464e7d028b90381976cb` | MIT |
+| QA ASR 2 | vakyansh wav2vec2 Hindi (`Harveenchadha/vakyansh-wav2vec2-hindi-him-4200`) | HF main at job time (ungated) | MIT |
+| Resampling (only if an engine isn't 24 kHz) | pinned ffmpeg n9.0.2 (`pipeline/ffmpeg.py`, sha256-checked) | — | GPL build; a tool, outputs unaffected |
+| Compute | AWS SageMaker training jobs (PyTorch 2.9 DLC), S3 | — | — |
+
+No paid API and no LLM in round 2. **Label:** every round-2 record's audio comes from an NC-licensed model and clones speakers who never consented to cloning. That's fine for this private, non-commercial project, but these records must not go into anything released or commercial. W7: carry an `nc` flag per source (`source.model = k2-fsa/OmniVoice` identifies them).
