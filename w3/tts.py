@@ -37,6 +37,10 @@ MAIN = _main_checkout()  # the laptop's data lives in the main checkout; a SageM
 IDS, VOICES = HERE / "ids.tsv", HERE / "voices.tsv"
 FIRST_ID, RATE = 400000, 24000
 ON_SM = Path("/opt/ml/input/config").exists()
+# Speaking rate of real IndicVoices *conversation* (W1 pool, 167 clips): chars of transcript per second of speech span,
+# p25-p75. The references are read/extempore speech (median 7.8 chars/s), so engines that copy the reference's pace
+# come out slow; OmniVoice gets an explicit duration at a per-voice rate drawn from this band instead.
+RATE_LO, RATE_HI = 9.3, 12.4
 NO_SUBS = "subs1"  # one word every ASR heard differently: review in round 1, a retake here (one human, §3.3)
 
 
@@ -192,6 +196,11 @@ def snapshot(engine):
     return snapshot_download(ENGINES[engine]["model"], revision=ENGINES[engine]["rev"])
 
 
+def voice_rate(voice):
+    """A voice's target speaking rate (chars/s), fixed per voice, spread evenly over the conversational band."""
+    return RATE_LO + (RATE_HI - RATE_LO) * (int(hashlib.sha256(voice.encode()).hexdigest()[:8], 16) % 1000) / 999
+
+
 def load_omnivoice():
     """OmniVoice (k2-fsa; code Apache-2.0, weights CC BY-NC): zero-shot cloning from a 3-10 s reference + transcript."""
     need("omnivoice==0.2.1")
@@ -205,7 +214,8 @@ def load_omnivoice():
             x, sr = ref_audio(v)
             prompts[v["voice"]] = m.create_voice_clone_prompt(ref_audio=(torch.from_numpy(x), sr), ref_text=v["ref_text"])
         seed_all(seed)
-        return m.generate(text=text, language="hi", voice_clone_prompt=prompts[v["voice"]])[0], 24000
+        dur = len(re.sub(r"[\s,]", "", text)) / voice_rate(v["voice"]) + 0.4  # + leading/trailing silence
+        return m.generate(text=text, language="hi", voice_clone_prompt=prompts[v["voice"]], duration=dur)[0], 24000
     return synth
 
 
@@ -252,7 +262,7 @@ def load_fake():
 
 ENGINES = {
     "omnivoice": {"model": "k2-fsa/OmniVoice", "rev": "c5fdb5ccb189668d56333f77ba2629f4cd7535f4", "clone": True,
-                  "load": load_omnivoice},
+                  "load": load_omnivoice, "opts": f"duration=chars/rate(voice)+0.4, rate {RATE_LO}-{RATE_HI}"},
     "voxcpm2": {"model": "openbmb/VoxCPM2", "rev": "32279effe8c19989596f05d353d1447f51d9e915", "clone": True,
                 "load": load_voxcpm2},
     "pocket": {"model": "saryps-labs/pocket-tts-hindi", "rev": "6bff9c1e776bb90c68dd05c2467c62d1ecdf1b51", "clone": True,
@@ -342,7 +352,7 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
         tried = []
         for take in range(1, (1 if bench else max_takes) + 1):
             req = {"engine": engine, "model": E["model"], "rev": E["rev"], "voice": v["voice"], "ref": v["ref"],
-                   "text": s["tts_dev"], "seed": take, "take": take}
+                   "text": s["tts_dev"], "seed": take, "take": take, **({"opts": E["opts"]} if "opts" in E else {})}
             # own GPU, no API bill: inr 0, no cap
             meta, b = archive.archive_call(service, req, call, stream="w3", inr=0.0, cap_inr=float("inf"), s3=s3, spool=spool)
             key = archive.request_key(req)
@@ -499,4 +509,5 @@ def main(argv=None):
 if __name__ == "__main__":
     assert text_key({"tts_dev": "क"}) == text_key({"tts_dev": "क", "pid": "x"}) != text_key({"tts_dev": "ख"})
     assert slug("ai4bharat/indic-parler-tts".split("/")[-1]) == "indic-parler-tts"
+    assert RATE_LO <= voice_rate("iv-S1") <= RATE_HI and voice_rate("iv-S1") == voice_rate("iv-S1") != voice_rate("iv-S2")
     main()
