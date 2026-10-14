@@ -187,6 +187,9 @@ def run(sh, archive, tmp, opener=urlopen, put=ingest_iv._put):
             if (k := group_key(m.name)) != cur:
                 if files:
                     process(sh, files, tmp, url, etag, put)
+                    if sh.st["files seen"] % 500 == 0:
+                        print(f"{stream.pos / 1e9:.1f}/{stream.size / 1e9:.1f} GB, {time.time() - t0:.0f} s, kept h "
+                              f"{ {k: round(v, 2) for k, v in sh.hours.items()} }", file=sys.stderr, flush=True)
                     if sh.full():
                         break
                 cur, files = k, {}

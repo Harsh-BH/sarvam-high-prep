@@ -39,7 +39,7 @@ MODELS = {"qwen3": ("qwen.qwen3-235b-a22b-2507-v1:0", .26, 1.04),
           "dsv32": ("deepseek.v3.2", .74, 2.22)}
 IT2 = {"model": "prajdabre/rotary-indictrans2-indic-en-dist-200M", "rev": "00213ee82929050694b162123bb26a8dc177cdae"}
 USD_INR = 88.0
-CAP_INR = 2500.0  # W6 AWS cap $30 (raised 2026-10-14 for the synthetic pilot; AWS credits cover it) = SageMaker + Bedrock; W6 uses no SageMaker, the archive estimate over-counts ~1.5x
+CAP_INR = 6000.0  # shared "w6" ledger. 2500 (W6 + synthetic pilot) + 3500 for S1 scale-real (~31 h of real records at ~94 INR/h estimated; the archive estimate over-counts actual usage ~1.66x). S1's own AWS cap is $25
 TAKES = 3  # hard-check failures (bad JSON, wrong segment count, Devanagari) retry up to this many takes
 JUDGE_CRITICAL = {"meaning", "omission", "addition", "number", "negation", "intent", "correction", "name"}
 JUDGE_CODES = JUDGE_CRITICAL | {"loanword", "style", "fluency"}
