@@ -39,7 +39,7 @@ MODELS = {"qwen3": ("qwen.qwen3-235b-a22b-2507-v1:0", .26, 1.04),
           "dsv32": ("deepseek.v3.2", .74, 2.22)}
 IT2 = {"model": "prajdabre/rotary-indictrans2-indic-en-dist-200M", "rev": "00213ee82929050694b162123bb26a8dc177cdae"}
 USD_INR = 88.0
-CAP_INR = 1000.0  # W6's AWS cap is $15 (SageMaker + Bedrock); Bedrock gets ≈$11 of it
+CAP_INR = 1250.0  # W6 AWS cap $15 = SageMaker + Bedrock; W6 uses no SageMaker, the archive estimate over-counts ~1.5x
 TAKES = 3  # hard-check failures (bad JSON, wrong segment count, Devanagari) retry up to this many takes
 JUDGE_CRITICAL = {"meaning", "omission", "addition", "number", "negation", "intent", "correction", "name"}
 JUDGE_CODES = JUDGE_CRITICAL | {"loanword", "style", "fluency"}
@@ -323,7 +323,7 @@ def main():
     ap.add_argument("--in", dest="inp", type=Path, required=True)
     ap.add_argument("--audio-dir", type=Path, required=True)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--engine", default="qwen3", choices=sorted(MODELS) + ["it2"])
+    ap.add_argument("--engine", default="mistral3", choices=sorted(MODELS) + ["it2"])  # bench: tasks/W6-translation.md
     ap.add_argument("--judge", default="gptoss", choices=sorted(MODELS) + [""])
     ap.add_argument("--no-repair", action="store_true")
     ap.add_argument("--workers", type=int, default=8)

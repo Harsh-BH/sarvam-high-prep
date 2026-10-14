@@ -7,6 +7,7 @@
     uv run w6/bench.py report DIR...            # DIR = a translate.py --out dir named <engine>.<judge>; prints markdown
     uv run w6/bench.py inject DIR --judge J     # judge recall on known injected errors (synthetic controls)
     uv run w6/bench.py agree DIR DIR            # same engine, two judges: agreement on critical segments
+    uv run w6/bench.py spend                    # W6's archived Bedrock calls: real tokens x price, per model
 
 `report`: per engine x judge: segments, judge critical-error rate (+ per code), automatic entity flags (number value,
 unit, digits), negation and length flags, loanword restoration rate (IndicVoices L2 glosses, real clips only).
@@ -17,6 +18,7 @@ checks catch it; false positives = critical codes on the untouched segments.
 """
 import argparse, json, re, sys
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -37,9 +39,9 @@ def segs(recs):
         gl = qa.glosses(r.get("_w1", {}).get("segments", []))
         for i, s in enumerate(r["sentences"]):
             g = qa.sentence_glosses(s["hi_text"], gl)
-            yield {"id": r["id"], "i": i, "syn": r["source"]["synthetic"], "auto": w["auto"][i]["en"],
+            yield {"id": r["id"], "i": i, "syn": r["source"]["synthetic"], "auto": qa.check(s["hi_text"], s["en_text"], g),
                    "judge": (w["verdict"] or [{}] * 999)[i],
-                   "gl": len(g), "gl_ok": len(g) - len(w["auto"][i]["en"].get("loanword", [])), "alt": "en_alt" in s}
+                   "gl": len(g), "alt": "en_alt" in s}
 
 
 def pct(a, b):
@@ -60,7 +62,7 @@ def report(dirs):
             codes = Counter(c for x in sub for c in x["judge"].get("en", []))
             ent = sum(1 for x in sub if AUTO_ENTITY & set(x["auto"]))
             f = lambda k: sum(1 for x in sub if k in x["auto"])
-            gl, glok = sum(x["gl"] for x in sub), sum(x["gl_ok"] for x in sub)
+            gl, glok = sum(x["gl"] for x in sub), sum(x["gl"] - len(x["auto"].get("loanword", [])) for x in sub)
             print(f"| {eng} | {jud} | {name} | {n} | {pct(crit, n)} | {pct(anyj, n)} | {pct(ent, n)} | {pct(f('digits'), n)} | "
                   f"{pct(f('neg'), n)} | {pct(f('length'), n)} | {pct(glok, gl)} ({gl}) | {sum(x['alt'] for x in sub)} | "
                   f"{sum(x['judge'].get('dropped', 0) for x in sub)} | "
@@ -119,8 +121,6 @@ def inject(d, judge, per_kind):
                     n += 1
                     break
     res = defaultdict(lambda: [0, 0, 0, 0, 0])  # n, judge caught, auto caught, fp segments, other segments
-    from concurrent.futures import ThreadPoolExecutor
-
     def run(job):
         kind, r, i, bad = job
         his = [s["hi_text"] for s in r["sentences"]]
@@ -158,6 +158,25 @@ def agree(d1, d2):
           f"{(po - pe) / (1 - pe):.2f} |")
 
 
+def spend():
+    import s3 as store
+    by = defaultdict(lambda: [0, 0, 0, 0.0])  # calls, in tokens, out tokens, estimate INR charged to the cap
+    price = {m: (pi, po) for m, pi, po in tr.MODELS.values()}
+    ks = [k for k in store.keys("archive/api/bedrock/") if k.endswith(".json")]
+    for m in ThreadPoolExecutor(16).map(lambda k: json.loads(store.get(k)), ks):
+        if m.get("stream") == "w6":
+            x = by[m["request"]["model"]]
+            x[0] += 1; x[1] += m["response"]["usage"]["inputTokens"]; x[2] += m["response"]["usage"]["outputTokens"]; x[3] += m["inr"]
+    print("| model | calls | input tokens | output tokens | USD (list price) | INR charged to the cap (estimate) |")
+    print("|---|---|---|---|---|---|")
+    tot = [0, 0.0, 0.0]
+    for mid, (n, ti, to, inr) in sorted(by.items()):
+        usd = (ti * price[mid][0] + to * price[mid][1]) / 1e6
+        tot[0] += n; tot[1] += usd; tot[2] += inr
+        print(f"| {mid} | {n} | {ti} | {to} | {usd:.2f} | {inr:.0f} |")
+    print(f"| **total** | {tot[0]} | | | **{tot[1]:.2f}** | {tot[2]:.0f} |")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -167,6 +186,7 @@ def main():
     i.add_argument("dir")
     i.add_argument("--judge", required=True, choices=sorted(tr.MODELS))
     i.add_argument("--per-kind", type=int, default=25)
+    sub.add_parser("spend")
     g = sub.add_parser("agree")
     g.add_argument("dirs", nargs=2)
     a = ap.parse_args()
@@ -174,6 +194,8 @@ def main():
         report(a.dirs)
     elif a.cmd == "agree":
         agree(*a.dirs)
+    elif a.cmd == "spend":
+        spend()
     else:
         inject(a.dir, a.judge, a.per_kind)
 
