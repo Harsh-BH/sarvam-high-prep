@@ -311,3 +311,33 @@ No new organiser questions; W0's list covers the PS ambiguities this touches.
   - Pinned engine revisions are in the engine table above.
 - **W1/W4:** vakyansh truncates whole clips longer than ~10 s. Decode in ≤ 7 s chunks cut at the quietest frame (`w3/qa.py:asr_w2v`). `w1/asr_check.py` decodes whole clips.
 - **W8b:** Bulbul v3 at temperature 0.3 was more faithful than 0.6 on Hindi (12 pairs). Worth the same test on English `shubh` targets.
+
+## Round 2, 2026-10-14: open engines at scale
+
+**Context change (Harsh, 2026-10-14; CLAUDE.md):** personal learning project. Engines must be open-source or free; Bulbul is out (no credits, not open). Non-commercial (NC) licences are acceptable here and are labelled **NC** below. GPU work runs on SageMaker.
+
+### Open Hindi TTS survey (2026-10-14)
+
+Sources: HF cards and API metadata, GitHub, PyPI, read 2026-10-14 (S = the source's own claim). "Job-runnable" = ungated, because a SageMaker job gets no HF token (W4's IndicConformer needed an S3 mirror for that reason).
+
+| Engine | Hindi voices | Weights / code licence | Gated | Size | Ran? |
+|---|---|---|---|---|---|
+| **OmniVoice** (k2-fsa, 2026-03) | zero-shot cloning, 3–10 s reference + transcript; 117 h Hindi in 581k h (S) | **CC BY-NC (NC)** (card; no HF tag) / Apache-2.0 | no | 3.3 GB | **yes, SageMaker** |
+| **pocket-tts-hindi** (Saryps Labs, 2026-09) | cloning from a reference clip; 932 h IndicVoices + Kathbath (S) | CC BY 4.0 / MIT (pocket-tts runtime) | no | 0.22 GB | **yes, laptop CPU** |
+| VoxCPM2 (OpenBMB) | cloning or text-described voices; 30 languages incl. Hindi (S); MiniMax Hindi WER 19.7 vs internal CER 0.79% (S, contradictory) | Apache-2.0 | no | 5.0 GB, bf16 | queued (no g6/g5 capacity) |
+| Magpie 357M (NVIDIA) | 5 fixed English-speaker voices; no cloning (S) | NVIDIA Open Model License | no | 0.6 GB | round 1 |
+| Indic Parler-TTS | 4 named Hindi speakers; unnamed descriptions give random voices (S) | Apache-2.0 | **yes** (not job-runnable) | 3.75 GB | round 1 (40% reject) |
+| IndicF5 (AI4Bharat) | cloning; last of 7 in SpeechArena (Elo 805.8, S) | MIT weights, code has no licence | **yes, access not granted** (HTTP 403, 2026-10-14) | 1.4 GB | no |
+| SPRING_F5 / F5-Hindi-24KHz (IIT Madras) | F5 cloning | Apache-2.0 tag, code no licence / CC BY 4.0 (fork) | no | 5.4 / 0.6 GB | no: no published Hindi numbers, F5 family ranks last in SpeechArena |
+| Chatterbox Multilingual + `-hi` finetune (Resemble AI) | cloning | MIT; outputs carry Resemble's Perth watermark | no | 3.2 GB | no: package pins torch 2.6 (image has 2.9); the `-hi` loader exists only as modified code inside its demo Space |
+| XTTS-v2 (coqui-tts) | cloning | CPML (**NC, outputs too**) / MPL-2.0 | no | 2.1 GB | no: older, superseded by OmniVoice in the same licence class |
+| Indic-Speak, Veena, Kokoro, Piper, svara, Orpheus-hi | ≤ 5 fixed Hindi voices, or Llama-3.2 bases | various | mixed | 0.3–13 GB | no: "many voices" is the goal |
+| Sooktam-2 (BharatGen), Higgs TTS 3, Fish S2 | cloning | research / NC licences | no | 6.7–11 GB | no: bigger, no Hindi numbers |
+| Qwen3-TTS, CosyVoice 3, IndexTTS-2, kyutai pocket-tts (base) | — | — | — | — | no Hindi |
+
+### Voices: 40 cloned IndicVoices speakers
+
+- `w3/voices.py` picks one 6–11 s segment per speaker from the IndicVoices Hindi files W1 already holds: non-conversation (wideband) recordings with an excellent/good verification report, no noise, echo, chatter or volume flags, and a tag-free verbatim text. It keeps the cleanest segment per speaker (SNR as `pipeline/audio_qc.py` measures it), cut to 24 kHz with the pinned ffmpeg, then the 20 cleanest speakers per gender.
+- 73 speakers qualified (41 m, 32 f); 40 kept (20 f, 20 m). Each clip is stored write-once at `raw/_voices/iv-<speaker>.wav` with a sidecar (source file and offsets, transcript, speaker metadata, sha256, licence CC BY 4.0, attribution AI4Bharat IndicVoices). `w3/voices.tsv` is the bank; a script gets a voice of its own `gender` by a stable hash of its `pid` (≈ 12 scripts per voice in the pilot).
+- **Consent caveat (ethics):** these speakers consented to IndicVoices' collection for speech technology under CC BY 4.0, which permits reuse of the recordings. They did **not** explicitly consent to having their voices cloned. This is acceptable only for this private, non-commercial learning project. Never publish the synthetic audio, and never present it as the speaker. Before any release, replace these references with voices whose owners consented to cloning (e.g. Harsh's own voice, or TTS-corpus voice artists such as Rasa or SYSPIN, whose recordings were made for TTS).
+- **Speaking rate (measured):** real IndicVoices *conversation* runs at 10.7 transcript chars per second of speech (p25–p75 9.3–12.4; 167 W1 pool clips). Extempore runs at 9.7 and read speech at 7.3. The 40 references are read/extempore speech at a median of 7.8 (range 4.0–13.0). OmniVoice derives output duration from the reference's pace, so its first smoke render of p001 took 34 s where other engines took 14–19 s. The stage therefore gives OmniVoice an explicit duration: chars / the voice's target rate + 0.4 s, where each voice gets a fixed target rate spread evenly over the conversational p25–p75 band (`tts.voice_rate`). Pocket ends on its own EOS and came out at 0.089 s/char (≈ 11 chars/s) without help.
