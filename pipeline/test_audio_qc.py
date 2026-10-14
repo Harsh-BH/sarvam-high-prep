@@ -38,6 +38,8 @@ def main():
     x = speechlike(15, 6); X = np.fft.rfft(x); X[np.fft.rfftfreq(len(x), 1 / SR) > 4000] *= 0.05
     write(d / "dull.wav", np.fft.irfft(X, len(x)))  # wideband, but HF share ~0.005 like the W1 pool's 44.1 kHz median
     assert not audio_qc.measure(d / "dull.wav")["telephone"]
+    write(d / "quiet.wav", 32768 * 10 ** (-60 / 20) * np.sin(np.arange(SR * 15) * 2 * np.pi * 440 / SR))  # frames at -63 dBFS
+    assert audio_qc.measure(d / "quiet.wav")["silence_ratio"] == 1.0
     recs = "".join(json.dumps({"id": f"rec-00000{i}", "audio": f"audio/rec-00000{i}.wav"}) + "\n" for i in range(1, 6))
     (d / "in.jsonl").write_text(recs)
     cmd = [sys.executable, str(Path(audio_qc.__file__)), "--in", str(d / "in.jsonl"), "--audio-dir", str(d), "--out", str(d / "out")]
@@ -46,6 +48,8 @@ def main():
     rej = {json.loads(l)["id"]: json.loads(l)["rule"] for l in open(d / "out/rejects.jsonl")}
     assert [r["id"] for r in kept] == ["rec-000001", "rec-000002"] and kept[1]["_qa"]["audio_qc"]["telephone"] is True
     assert rej == {"rec-000003": "clipping", "rec-000004": "silence", "rec-000005": "duration"}, rej
+    failed = {json.loads(l)["id"]: json.loads(l)["detail"]["failed"] for l in open(d / "out/rejects.jsonl")}
+    assert failed["rec-000004"] == ["silence", "level", "snr"], failed
     subprocess.run(cmd, check=True)  # resume: nothing duplicated
     assert sum(1 for _ in open(d / "out/records.jsonl")) == 2 and sum(1 for _ in open(d / "out/rejects.jsonl")) == 3
     lines = (d / "out/rejects.jsonl").read_text().splitlines(keepends=True)
