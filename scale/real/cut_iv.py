@@ -21,8 +21,9 @@ import argparse, collections as C, http.client, io, json, re, shutil, sys, tarfi
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path[:0] = [str(ROOT / "w1"), str(ROOT / "pipeline")]
+sys.path[:0] = [str(ROOT / "w1"), str(ROOT / "pipeline"), str(ROOT / "w8c")]
 import cut_pilot as W1, ingest_iv  # noqa: E402
+from split import is_heldout  # noqa: E402
 
 BLOCK = 1000  # ids per shard; a 3.6 h shard needs ~650
 HERE = Path(__file__).resolve().parent
@@ -33,7 +34,8 @@ def urlopen(req):
 
 
 def held_out():
-    """Speaker ids no train cut may use: every IV-valid speaker, and every IV person a W3 voice clones."""
+    """Speaker ids no train cut may use: every IV-valid speaker, and every IV person a W3 voice clones. A superset of
+    w8c's held-out persons (drawn from these), so it stays safe if w8c grows its set; is_heldout() is checked too."""
     valid = {l.strip() for l in open(HERE / "valid_speakers.txt") if l.strip() and not l.startswith("#")}
     return valid | {l.split("\t")[0].removeprefix("iv-") for l in open(ROOT / "w3/voices.tsv") if l.startswith("iv-")}
 
@@ -114,7 +116,7 @@ class Shard:
         kind, spk = d["scenario"], d["speaker_id"]
         why = ("other part" if zlib.crc32(spk.encode()) % self.nparts != self.part else
                "done" if source_file in self.done else
-               "held-out speaker (IV valid / W3 voice)" if spk in self.held else
+               "held-out speaker (IV valid / W3 voice)" if spk in self.held or is_heldout({"speaker_id": f"spk-indicvoices-{spk}"}) else
                "kind quota full" if self.hours[kind] >= self.quota.get(kind, 0) else
                "speaker cap" if self.secs[f"spk-indicvoices-{spk}"] >= self.cap else None)
         if why:
