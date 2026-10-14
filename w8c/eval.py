@@ -128,12 +128,15 @@ def asr_words(wav_paths, model):
     return out
 
 
+_comet = {}
+
+
 def comet_scores(triples, model):
     if model is None:
         return None
     import torch
     from comet import download_model, load_from_checkpoint
-    m = load_from_checkpoint(download_model(model))
+    m = _comet.get(model) or _comet.setdefault(model, load_from_checkpoint(download_model(model)))
     return m.predict([{"src": s, "mt": h, "ref": r} for s, h, r in triples], batch_size=16,
                      gpus=1 if torch.cuda.is_available() else 0, progress_bar=False).scores
 
@@ -164,7 +167,7 @@ def score(recs, sys_dir, asr=None, comet=None, asr_model="openai/whisper-large-v
             p[f"{track}_ent"] = entity_hits(ref, p[track])
         for k in keys:
             p[f"lat_{k}"] = latency(r, to_timeline(a["words"], o["frames"], k), p["failed"])
-            tw = [(w, e[k], e[k]) for e in o.get("text_events", []) for w in e["text"].split()]
+            tw = [(w, e[k], e[k]) for e in o.get("text_events", []) for w in e["text"].split() if re.search(r"\w", w)]
             p[f"text_lat_{k}"] = latency(r, tw, p["failed"])
         per.append(p)
     comet_fn = comet or (lambda t: comet_scores(t, comet_model))

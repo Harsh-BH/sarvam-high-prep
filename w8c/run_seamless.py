@@ -16,7 +16,7 @@ Agent: SeamlessStreaming's s2st pipeline without VAD, plus the detokenizer branc
 agreed with w8d (max_len_a=1, max_len_b=200 = the text decoder's own defaults; streaming_evaluate's 0/100 truncates
 our 60 s records). --ckpt: a w8d fine-tuned monotonic decoder, {"model": state_dict}, loaded strict over the base.
 """
-import argparse, json, time, wave
+import argparse, json, re, time, wave
 from pathlib import Path
 
 import numpy as np
@@ -141,7 +141,7 @@ def main():
         tic = time.perf_counter()
         frames, pcm, events, failed = run_one(agent, x)
         write_wav(a.out / f"{r['id']}.wav", pcm)
-        text = " ".join(e["text"] for e in events)
+        text = re.sub(r" ([,.?!;:])", r"\1", " ".join(e["text"] for e in events))  # the detokenizer emits "," alone
         (a.out / f"{r['id']}.json").write_text(json.dumps({
             "id": r["id"], "frames": frames, "text": text, "text_events": events, "failed": failed,
             "compute_s": round(time.perf_counter() - tic, 3), "src_s": round(len(x) / RATE, 3)}, ensure_ascii=False))
