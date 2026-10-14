@@ -32,7 +32,7 @@ def client():
 
 
 def _code(e):
-    return getattr(e, "response", {}).get("Error", {}).get("Code", "")
+    return (getattr(e, "response", None) or {}).get("Error", {}).get("Code", "")  # response may be None on network errors
 
 
 def put_once(key, body, s3=None):

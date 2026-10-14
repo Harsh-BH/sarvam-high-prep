@@ -88,6 +88,19 @@ def main():
     (spool / "bulbul" / "abc.json").write_text(json.dumps({"response": {}, "payload": None, "stream": "w3", "inr": 0}))
     assert archive.flush_spool(f, spool) == 1 and "archive/api/bulbul/abc.json" in f.objects
     assert not any(spool.rglob("*.json"))
+
+    # ledger: a fresh process sees the same spend from the markers alone (one LIST, no GET per archived call)
+    archived = {k: json.loads(v) for k, v in f.objects.items() if k.startswith("archive/api/") and k.endswith(".json")}
+    want = sum(m["inr"] for m in archived.values() if m["stream"] == "w3")
+    archive._spent.clear()
+    assert archive.spent("w3", f) == want, (archive.spent("w3", f), want)
+    # backfill: calls archived before the ledger existed get their markers, once
+    for k in [k for k in f.objects if k.startswith("archive/spend/")]:
+        del f.objects[k]
+    archive._spent.clear()
+    assert archive.spent("w3", f) == 0 and archive.backfill(f) == len(archived) and archive.backfill(f) == 0
+    archive._spent.clear()
+    assert archive.spent("w3", f) == want
     print("ok: archive")
 
 

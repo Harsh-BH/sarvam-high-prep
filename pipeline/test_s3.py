@@ -81,6 +81,9 @@ def main():
     assert s3.profile({}, on_sagemaker=False) == "harsh-admin"
     assert s3.profile({}, on_sagemaker=True) is None
     assert s3.profile({"AWS_PROFILE": "x"}, on_sagemaker=False) == "x"
+    class NetErr(Exception):
+        response = None  # botocore sets this on some network errors
+    assert s3._code(NetErr()) == ""
     print("ok: fake")
     if "--live" in sys.argv:
         c = s3.client()
