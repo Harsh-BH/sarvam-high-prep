@@ -108,6 +108,14 @@ def main():
         (out / "records.jsonl").write_bytes(before.splitlines(keepends=True)[0])
         cut_iv.run(shard(), "v1", Path(d) / "tmp", opener(data, [etag])[0], put)
         assert (out / "records.jsonl").read_bytes() == before and len(open(out / "ids_new.tsv").readlines()) == 2
+        # --continue: the first run's files are done and its spans used; dd is new, with a fresh quota and block
+        prev = tuple(open(out / f).read().splitlines() for f in ("records.jsonl", "seen.txt", "ids_new.tsv"))
+        out2 = Path(d) / "out2"
+        (out2 / "audio").mkdir(parents=True)
+        sh2 = cut_iv.Shard(out2, {"Extempore": 1.0}, 0, 1, 2001, 240.0, frozenset({"SHELD"}), prev)
+        cut_iv.run(sh2, "v1", Path(d) / "tmp", opener(data, [etag])[0], put)
+        got = [(json.loads(l)["id"], json.loads(l)["source"]["source_file"].rsplit("/", 1)[1]) for l in open(out2 / "records.jsonl")]
+        assert got == [("rec-002001", "dd.wav")], got
     held = cut_iv.held_out()
     assert len(held) > 483 and "S4259465500359288" in held  # IV valid + the W3 voice cloned from a train speaker
     print("ok: cut_iv")

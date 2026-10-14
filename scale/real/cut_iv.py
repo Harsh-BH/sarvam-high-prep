@@ -83,11 +83,13 @@ def group_key(name):
 
 
 class Shard:
-    def __init__(self, out, quota, part, nparts, id_base, speaker_cap, held=frozenset()):
+    def __init__(self, out, quota, part, nparts, id_base, speaker_cap, held=frozenset(), prev=None):
+        """prev: (records lines, seen lines, ids_new lines) of a run this one continues (--continue)."""
         self.out, self.quota, self.part, self.nparts, self.cap, self.held = out, quota, part, nparts, speaker_cap, held
         self.used = C.defaultdict(list)  # source_file -> registered (start, end) s, never cut again
-        for (f, a, b), _ in W1.load_ids().items():
-            self.used[f].append((a / 1000, b / 1000))
+        prev_recs, prev_seen, prev_ids = prev or ([], [], [])
+        for f, a, b in list(W1.load_ids()) + [tuple(l.split("\t")[1:]) for l in prev_ids]:
+            self.used[f].append((int(a) / 1000, int(b) / 1000))
         assert id_base > max([int(v[4:]) for v in W1.load_ids().values()] or [0]), "id block overlaps w1/ids.tsv"
         self.base, self.ids = id_base, {}  # (source_file, a_ms, b_ms) -> id, this shard's allocations
         reg = out / "ids_new.tsv"
@@ -107,6 +109,10 @@ class Shard:
                 self.done.add(r["source"]["source_file"])
         if (out / "seen.txt").exists():
             self.done |= {l.strip() for l in open(out / "seen.txt")}
+        for r in map(json.loads, prev_recs):  # quotas are this run's; files and speaker seconds carry over
+            self.secs[r["speaker_id"]] += r["duration"]
+            self.done.add(r["source"]["source_file"])
+        self.done |= {l.strip() for l in prev_seen}
 
     def full(self):
         return all(self.hours[k] >= q for k, q in self.quota.items())
@@ -217,12 +223,20 @@ def main():
     ap.add_argument("--id-base", type=int, required=True)
     ap.add_argument("--quota", required=True, help="hours per scenario, e.g. Conversation=1.6,Extempore=1.6,Read=0.4")
     ap.add_argument("--speaker-cap", type=float, default=240.0, help="seconds of clips per speaker in this shard")
+    ap.add_argument("--continue", dest="prev", help="stages/cut/<run> of the same archive and part: skip its files, "
+                    "count its speakers' seconds against --speaker-cap, never overlap its spans")
     a = ap.parse_args()
     ingest_iv.gate("indicvoices")
     k, n = map(int, a.part.split("/"))
     quota = {kv.split("=")[0]: float(kv.split("=")[1]) for kv in a.quota.split(",")}
     (a.out / "audio").mkdir(parents=True, exist_ok=True)
-    sh = Shard(a.out, quota, k, n, a.id_base, a.speaker_cap, held_out())
+    prev = None
+    if a.prev:
+        import s3 as store
+        meta = json.loads(store.get(f"{a.prev}/run.json"))["params"]
+        assert meta[meta.index("--archive") + 1] == a.archive and meta[meta.index("--part") + 1] == a.part, meta
+        prev = tuple((store.get(f"{a.prev}/{f}") or b"").decode().splitlines() for f in ("records.jsonl", "seen.txt", "ids_new.tsv"))
+    sh = Shard(a.out, quota, k, n, a.id_base, a.speaker_cap, held_out(), prev)
     with tempfile.TemporaryDirectory() as tmp:  # not under --out: on SageMaker that is the synced checkpoint dir
         run(sh, a.archive, Path(tmp))
     print(f"cut {a.archive} part {a.part}: {dict(sh.hours)} h; stats in cut_stats.json", file=sys.stderr)
