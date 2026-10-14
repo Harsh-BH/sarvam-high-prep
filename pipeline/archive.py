@@ -25,16 +25,29 @@ def _load(service, key, s3=None):
     return meta["response"], payload
 
 
+def _ledger(stream, service, key, inr, s3=None):
+    """Spend marker: an empty object whose name carries the cost, so spent() is one LIST, not a GET per call.
+    Named by request key, so the winner and loser of a race count once (same as the archived metadata)."""
+    store.put_once(f"archive/spend/{stream}/{service}~{key}~{float(inr)!r}", b"", s3)
+
+
 def spent(stream, s3=None):
     if stream not in _spent:
-        # ponytail: one GET per archived call, fine for a few thousand calls; keep a spend index if it gets slow
-        total = 0.0
-        for k in store.keys("archive/api/", s3):
-            if k.endswith(".json"):
-                m = json.loads(store.get(k, s3))
-                total += m.get("inr", 0) if m.get("stream") == stream else 0
-        _spent[stream] = total
+        _spent[stream] = sum(float(k.rsplit("~", 1)[1]) for k in store.keys(f"archive/spend/{stream}/", s3))
     return _spent[stream]
+
+
+def backfill(s3=None):
+    """One-time: write spend markers for calls archived before the ledger existed. -> markers written."""
+    n = 0
+    for k in store.keys("archive/api/", s3):
+        if k.endswith(".json"):
+            m = json.loads(store.get(k, s3))
+            service, key = k.split("/")[2], k.rsplit("/", 1)[1].removesuffix(".json")
+            if m.get("stream") is not None and not store.exists(f"archive/spend/{m['stream']}/{service}~{key}~{float(m.get('inr', 0))!r}", s3):
+                _ledger(m["stream"], service, key, m.get("inr", 0), s3)
+                n += 1
+    return n
 
 
 def _upload(service, key, meta_bytes, payload, s3=None):
@@ -47,7 +60,10 @@ def _upload(service, key, meta_bytes, payload, s3=None):
 def _flush_one(p, s3=None):
     """Upload one spool entry (<spool>/<service>/<key>.json [+ .bin]), then drop it. -> _upload's result."""
     b = p.with_suffix(".bin")
-    won = _upload(p.parent.name, p.stem, p.read_bytes(), b.read_bytes() if b.exists() else None, s3)
+    meta = p.read_bytes()
+    won = _upload(p.parent.name, p.stem, meta, b.read_bytes() if b.exists() else None, s3)
+    m = json.loads(meta)
+    _ledger(m["stream"], p.parent.name, p.stem, m.get("inr", 0), s3)
     p.unlink(missing_ok=True)  # another process may flush the same entry
     b.unlink(missing_ok=True)
     return won

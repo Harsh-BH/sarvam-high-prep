@@ -254,12 +254,25 @@ Both stages follow the plan's contract: `--in RECORDS.jsonl --audio-dir DIR --ou
 ```
 
 **SageMaker (`--sm ml.g5.xlarge`) caveats:**
-1. **`ic-ctc` is a gated HF repo, and the job has no `HF_TOKEN`**, so `asr_check` will fail when it loads the draft model. Two options, both your call:
-   - (a) Mirror the MIT weights (2.4 GB, real files) write-once to e.g. `raw/_models/ai4bharat/indic-conformer-600m-multilingual/<HF commit>/`, and I add an S3 fallback in `asr_run.indicconformer`.
-   - (b) Put `HF_TOKEN` in the job's `Environment`. Not recommended: `DescribeTrainingJob` shows it in clear text.
+1. **Gated `ic-ctc` weights: resolved, option (a) (the master's decision).** See "IndicConformer weights mirror" below. A job fetches them from S3, so the token never goes into a job.
 2. IndicConformer runs on CPU onnxruntime: the CUDA execution provider needs an `onnxruntime-gpu` build that matches the image's CUDA 13. On the 4 vCPUs of a g5.xlarge, expect roughly real time for that one model. Fine for the pilot; switch to `onnxruntime-gpu` before 200 h.
 3. `load16k` uses `ffmpeg` from PATH, else the pinned `pipeline/ffmpeg.binary()` (read from `raw/_tools/`).
 4. The punctuation model (`transcribe`) and Whisper and vakyansh are ungated; they download into the job's `data/w4/hf/`.
+
+**IndicConformer weights mirror (option (a), done 2026-10-14):**
+- **Where:** `s3://sarvam-parta-114872709824/raw/_models/indic-conformer-600m-multilingual/2a77d305038dfc502fd9464e7d028b90381976cb/`. That is the HF commit `data/w4/ic600m` was downloaded at.
+- **What:** 404 files, 2.4 GB, written with `pipeline/s3.put_once`. Each file `F` has a sidecar `F.meta.json` = `{repo, revision, path, sha256, size, licence: "MIT", licence_url}`.
+- **Verified before upload:** all 404 local files matched HF's own hashes at that revision (296 LFS sha256, 108 git blob ids). The hub's `.cache/` and a stray `__pycache__/*.pyc` are not repo files and were not uploaded.
+- **Code:** `w4/ic_weights.py`, with three commands:
+  - `upload` is write-once. Data goes before its sidecar, so a sidecar implies its data is stored. A re-run skips matching files and refuses differing ones; the real re-run wrote 0 files.
+  - `check` compares local files against the stored sidecars without downloading.
+  - `fetch` downloads into `DIR.part/`, checks every file's sha256 and size against its sidecar, then renames into place, so only complete, verified copies are used.
+- **Load order:** `ensure()` (called by `asr_run.indicconformer`, so also by the `asr_check` stage) takes a local `data/w4/ic600m/` first. Otherwise it downloads from HF at the pinned revision if a token exists (env or `hf auth login`). Otherwise it uses the S3 mirror. **A job never gets a token**, so on SageMaker it always takes the mirror. `asr_check`'s PEP 723 dependencies gained `boto3`.
+- **Measured end to end:** I deleted the local copy and ran `asr_run.py ic-ctc` with no `HF_TOKEN` and an empty `HF_HOME`.
+  - `ensure` → `s3`: fetched and sha-checked 2.4 GB.
+  - The 2 decoded clips are identical to the archived `ic-ctc` hypotheses.
+  - 3 min 42 s in total on CPU, including the fetch.
+- **Check:** `uv run w4/test_ic_weights.py` runs against `FakeS3`. It covers sidecar fields, the excluded files, idempotent re-upload, a crash between data and sidecar, refusal on differing bytes, a byte-identical fetch, a tampered object being refused and never renamed into place, and `ensure()` choosing local, then S3 without a token. `--live` adds the real-bucket sidecar check (404/404 ok).
 
 **Audio paths:** everything W4 holds now points at `data/w1/pool_pinned/` (all 648 records identical in every field to pool v2, so no stage re-run was needed):
 - `review.tsv`'s `audio` column.
@@ -308,7 +321,8 @@ Both stages follow the plan's contract: `--in RECORDS.jsonl --audio-dir DIR --ou
    - ASR text would lose ≥ 98.5% of fillers.
    - ASR is used only for the gate and the audit draft.
 5. **Policy implemented** (no annotators): P0/P1/P2 dropped automatically, with documented thresholds. One frozen, stratified audit sample (`w4/audit_ids.txt`; 209 listed, 1.10 h, `data/w4/review.tsv`), with the patch archive and staleness guard tested end to end.
-6. **S3 plan Task 10** (§5): stage contract for `transcribe` and `asr_check`; `review_list.py import` → `archive/human/transcribe/` with `put_once`; three runnable checks, all `ok`. **Not committed** (the master commits).
+6. **S3 plan Task 10** (§5): stage contract for `transcribe` and `asr_check`; `review_list.py import` → `archive/human/transcribe/` with `put_once`; three runnable checks, all `ok`. Committed by the master (733cbdc).
+7. **IndicConformer S3 mirror** (§5, option (a)): 404 files + sidecars, write-once under `raw/_models/indic-conformer-600m-multilingual/2a77d305…/`. A token-less load is verified end to end, and `w4/test_ic_weights.py` passes (fake and `--live`). **Not committed** (the master commits).
 
 **For W1 (retire):**
 - P1: rec-000001, 000021, 000022, 000086, 000142, 000192, 000252, 000257, 000370, 000434, 000442, 000514, 000567, 000574, 000576, 000580.
@@ -327,11 +341,11 @@ Both stages follow the plan's contract: `--in RECORDS.jsonl --audio-dir DIR --ou
 **Next:**
 1. When W1's next pool lands: `transcribe` → `asr_check` (via `pipeline/run.py` once registered, or locally as in §5) → `review_list.py build`. The audit sample stays frozen.
 2. Harsh listens to `data/w4/review.tsv` once, then runs `uv run w4/review_list.py import`; report the audit WER in the mid-term report.
-3. The master decides the SageMaker access route for the gated IndicConformer weights (§5, caveat 1).
+3. Run the GPU SageMaker smoke of `asr_check` (master; the weights now come from the S3 mirror).
 4. Latin→Devanagari and digit→words conversion is still needed before any SPRING-INX or Vaani clip.
 
 **Owned files:**
-- `w4/` (commit all): `convert.py` (`transcribe` stage), `asr_check.py` (`asr_check` stage), `review_list.py` (gate rules, audit, import), `asr_run.py`, `asr_score.py`, `saaras_run.py`, `ivvalid_set.py`, `hf_purge.sh`, `test_convert.py`, `test_asr_check.py`, `test_review_list.py`, **`audit_ids.txt`**. `patches.jsonl` appears after the first import; commit it too.
+- `w4/` (commit all): `convert.py` (`transcribe` stage), `asr_check.py` (`asr_check` stage), `review_list.py` (gate rules, audit, import), `asr_run.py`, `asr_score.py`, `saaras_run.py`, `ivvalid_set.py`, `ic_weights.py` (S3 mirror of the gated weights), `hf_purge.sh`, `test_convert.py`, `test_asr_check.py`, `test_review_list.py`, `test_ic_weights.py`, **`audit_ids.txt`**. `patches.jsonl` appears after the first import; commit it too.
 - `data/w4/` (gitignored):
   - `stages/{transcribe,asr_check}/` (local stage runs; `asr_check/asr/` = the gate's archived hypotheses), `pool.jsonl`, `rejects.jsonl`, `review.tsv`
   - `asr/`: hypotheses; the scores are `scores.tsv`, `scores-saaras.tsv` and `ivvalid/scores.tsv`
