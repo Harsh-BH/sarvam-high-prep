@@ -2,7 +2,7 @@
 
 Feeds W1 (real audio), W2 (scripts), W4 (transcription), W6 (translation), W8c (dev set). Models/papers/repos are in `prior-art.md`; this file covers datasets only. W1's corpora (IndicVoices, SPRING-INX, Vaani, Kathbath, MUCS SLR103) are **not re-measured here**. Rows for them only add facts W1 lacks.
 
-**Method.** Everything below comes from pages fetched on 2026-10-14: HF Hub API `cardData`/`gated`, dataset-card text, the HF datasets-server `/statistics` and `/rows` endpoints (metadata only, no audio), OpenSLR resource pages, AIKosh listings and arXiv papers. No HF token was used. Gated cards are readable, but gated files are not, so anything that needs the files is marked **UNVERIFIED**. Disk used: under 1 MB, against a 1 GB budget.
+**Method.** Everything below comes from pages fetched on 2026-10-14: HF Hub API `cardData`/`gated`, dataset-card text, the HF datasets-server `/statistics` and `/rows` endpoints (metadata only, no audio), OpenSLR resource pages, AIKosh listings and arXiv papers. The first pass used no HF token. A second, gated-access pass read parquet footers and selected columns of IV-ST, Rasa, Vaani-Noise-Event and two SYSPIN mirrors (see the Status update). Anything still unreadable is marked **UNVERIFIED**. Disk used: under 5 MB.
 
 ## Binding rules → roles
 
@@ -21,7 +21,7 @@ Feeds W1 (real audio), W2 (scripts), W4 (transcription), W6 (translation), W8c (
 
 ## Headline findings
 
-1. **Licence is not what limits real hours.** About 2,000 h of licence-clean real Hindi exist (§E): Vaani alone has **1,003.78 h transcribed Hindi** ([Vaani-transcription-part](https://huggingface.co/datasets/ARTPARK-IISc/Vaani-transcription-part), update of 2026-10-08). That figure is far larger than W1's "only partly transcribed" suggests. What binds us is session shape (contiguous single-speaker 10–60 s windows), how fast W4 can convert transcripts, the telephone/noise share and entity density.
+1. **Licence is not what limits real hours.** About 1,900 h of licence-clean real Hindi exist (§E): Vaani alone has **1,003.78 h transcribed Hindi** ([Vaani-transcription-part](https://huggingface.co/datasets/ARTPARK-IISc/Vaani-transcription-part), update of 2026-10-08). That figure is far larger than W1's "only partly transcribed" suggests. What binds us is session shape (contiguous single-speaker 10–60 s windows), how fast W4 can convert transcripts, the telephone/noise share and entity density.
 2. **New A-real sources W1 does not list:**
    - Rural Women ASR v2 (~87 h, open, phone-recorded, IV schema);
    - SYSPIN S1.0 (~110 h, studio, 2 voices);
@@ -52,11 +52,11 @@ Key to columns: SR = sample rate; style R = read, E = extempore, C = conversatio
 | Dataset | Licence (where stated) | Role | Hindi h | Style / SR | Transcript / code-mix | Access | Why it matters |
 |---|---|---|---|---|---|---|---|
 | [Rural Women ASR v2](https://huggingface.co/datasets/ai4bharat/Rural_Women_ASR_v2) (AI4Bharat) | CC BY 4.0 in the README "Licensing" section; no metadata tag | **A-real** | ≈87 h of chunks (30,827 rows × 10.18 s mean chunk, from datasets-server partial stats on 5,880 rows). Unique-source hours are lower, because rows share raw files | E 62% / R 38% (partial stats); mobile phones via the Kathbath app; rural MP/UP/Bihar; 99.7% female; 48 kHz | IV-style `verbatim` + `normalized` with speaker-timed segments and `<Persistent-noise-start>` tags. **Light code-mix:** 35/80 sampled rows carry bracketed English (`[mobile]`, `[Online]`, `[discount]`) | **Open**, no gate (31.4 GB Hindi) | Same JSON schema and speaker-ID format as IndicVoices, so W1's loader nearly applies. Phone mic + rural noise is close to §4. Measured: **0 of 16 sampled speakers overlap the 1,390 IV Hindi speakers in W1's local sample** (weak evidence of a separate collection). Consent statement: UNVERIFIED |
-| [IISc SYSPIN S1.0](https://aikosh.indiaai.gov.in/home/datasets/details/iisc_syspin_s1_0_corpus.html) | "Attribution 4.0 International (CC BY- 4.0)" (AIKosh) | A-real (low rank) | 54h58m male + 54h55m female human-checked, plus 9.4 h unchecked | Studio, voice artists, 2 speakers. SR UNVERIFIED | Text domains: agriculture, finance, health-care, technology, sports, books… | AIKosh registration | Real and entity-bearing (finance/health text), but 2 studio voices are far from the test acoustics. Use only if we need read finance text |
-| [Rasa](https://huggingface.co/datasets/ai4bharat/Rasa) (AI4Bharat, Interspeech 2024) | CC BY 4.0 | A-real (low rank) | 27.05 h female + 23.78 h male = 50.83 h | Studio, 48 kHz, 2 speakers. Neutral, 6 Ekman emotions, **command-style (Alexa, BigBasket, UMANG, DigiPay)**, conversation, news | Prompt-text format UNVERIFIED (files gated) | Gated (auto) | Command-style utterances are entity-dense (payments, e-commerce, gov services). But the mean utterance is ≈6.4 s (27.05 h / 15,107), and §5.2 wants contiguous `[start,end]` of one file, so they cannot be concatenated into 10–60 s sessions |
+| [IISc SYSPIN S1.0](https://aikosh.indiaai.gov.in/home/datasets/details/iisc_syspin_s1_0_corpus.html) | "Attribution 4.0 International (CC BY- 4.0)" (AIKosh) | A-real (low rank) | 54h58m male + 54h55m female human-checked, plus 9.4 h unchecked | Studio, voice artists, 2 speakers. **SR: 48 kHz, 24-bit mono PCM** in the embedded WAV header of the [nikk13 mirror](https://huggingface.co/datasets/nikk13/iisc_syspin_tts_hindi-female). The [SayantanJoker mirror](https://huggingface.co/datasets/SayantanJoker/SYSPIN_Hindi_Female_TTS) has 44.1 kHz / 16-bit, re-encoded (INFERRED: nobody upsamples). Original AIKosh files not inspected (registration) | Measured on both mirrors: **one Devanagari sentence per WAV**; English loanwords already in Devanagari (फ्लैट, ड्राइविंग लाइसेंस, पीयूसी); final `।`, `|` or nothing. Female mirror: 21,893 / 22,058 utterances (≈9 s mean). Domains: agriculture, finance, health-care, technology, sports, books… | AIKosh registration. The HF mirrors have **no licence tag**, so cite AIKosh (CC BY 4.0) and take the audio from AIKosh | Real and entity-bearing (finance/health text), but 2 studio voices are far from the test acoustics. Use only if we need read finance text |
+| [Rasa](https://huggingface.co/datasets/ai4bharat/Rasa) (AI4Bharat, Interspeech 2024) | CC BY 4.0 | A-real (low rank) | 27.05 h female + 23.78 h male = 50.83 h | Studio, 2 speakers. **Measured: WAV PCM 48 kHz, mono, 16-bit, embedded in parquet** (`audio` struct). 28,571 utts (train 45.79 h, test 5.04 h); p50 5.5 s, 19.8% ≥10 s, max 49.6 s | Columns `filename, text, language, gender, style, duration, wav_path, audio`. **One read sentence per WAV**, in Devanagari, punctuated (`।`, commas), numbers written as words (digits in 7 of 28,571), English in Devanagari (Latin in 3). Hours by `style`: WIKI 15.8 · emotions (6) 11.8 · CONV 7.6 (mean 4.1 s) · NEWS 4.4 · BOOK 4.3 · PROPER NOUN 2.9 (5,002 isolated names, mean 2.1 s) · INDIC 2.1 · **command styles ALEXA 0.48 / BB 0.52 / DIGI 0.50 / UMANG 0.50 = 2.0 h** | Gated (auto) | Smaller than the card suggests for us: the entity-dense command styles total only **2.0 h**. Utterances are single sentences (mean 6.4 s), and §5.2 wants a contiguous `[start,end]` of one file, so they can't be joined into 10–60 s sessions. The PROPER NOUN set (5,002 spoken Indian names) is the most distinctive part, worth a look for W3/W8b name-pronunciation checks |
 | [Indic DiarBench](https://huggingface.co/datasets/sarvamai/indic-diarbench) (**Sarvam**, Interspeech 2026) | CC BY 4.0 | **Eval** (A-real possible for NF/FF) | 10.7 h = 4.2 h near-field (online-meeting audio) + 4.0 h far-field + 2.5 h in-the-wild (YouTube) | C, multi-speaker, 16.6% overlap; 16 kHz | Human speaker-attributed, time-aligned. Native-script and normalised (English in Roman) versions; explicitly code-mixed | **Open** | The only human-labelled, code-mixed, conversational Hindi with real far-field and meeting-codec audio we found. Best W8c dev set for §4 conditions. The ITW part is YouTube (consent → Trap for Part A) |
 | [IndicVoices-R](https://huggingface.co/datasets/ai4bharat/indicvoices_r) | CC BY 4.0 | Trap-ish (AMBIGUOUS) | 74.60 h (4.31 R + 70.28 E; [paper](https://arxiv.org/html/2409.05356) Table 3) | 48 kHz, **enhanced** with HTDemucs → VoiceFixer → DeepFilterNet3 | IV transcripts | Gated | Same recordings as IndicVoices, made cleaner and so *further* from the noisy test. Its files are different from IV's files for the same speech, which invites double-counting hours (§3A). Use IV originals (W1) |
-| [IndicVoices-ST](https://huggingface.co/datasets/ai4bharat/IndicVoices-ST) (BhasaAnuvaad) | CC BY 4.0 | A-real via IV (W1) + W6 reference | 282.9 h / 21.6K utts, so a **mean of ≈47 s** ([paper](https://arxiv.org/html/2411.04699) Table A2) | IV audio resampled to 16 kHz | Hindi = IV transcripts; English text from **Llama-3.1-405B-Instruct**; English speech from Indic Parler-TTS | Gated. The Hindi parquet is only 1.89 GB, so the column content is UNVERIFIED | Paragraph-length IV segments with an English side: a ready-made 10–60 s cut list for W1/W6. Take audio from IV originals, not the 16 kHz copy. Its English is neither Bulbul audio (§3B) nor licence-clean text (Llama naming clause) |
+| [IndicVoices-ST](https://huggingface.co/datasets/ai4bharat/IndicVoices-ST) (BhasaAnuvaad) | CC BY 4.0 | A-real via IV (W1) + W6 reference | **Measured on the released Hindi parquet: 54,562 rows, 170.5 h** (sum = union of intervals, so no overlaps). The [paper](https://arxiv.org/html/2411.04699)'s Table A2 says 282.9 h / 21.6K, which doesn't match the release. Median 9.2 s, p90 20.2 s, max 445 s. 10–60 s: 24,182 rows / **113.6 h**. Drawn from 17,223 distinct IV source files | **Audio is MP3 (MPEG-2 Layer III, 16 kHz, ≈24 kbps), embedded** as `chunked_audio_filepath.bytes`. That explains 1.89 GB for 170 h | Columns `text, pred_text, audio_filepath, start_time, duration, alignment_score, en_text, en_mining_score`. `text` is pure Devanagari: in 2,100 sampled rows, no tags, brackets, Latin, digits **or punctuation**. `pred_text` = ASR output. `alignment_score` p50 0.99. English is Llama-3.1-405B per the paper; `en_mining_score` p10/p50/p90 0.54 / 0.74 / 0.84. **4% of `en_text` (2,198 rows) carry meta-text** such as `कुत्ता translates to "dog" in English`, and 918 contain Devanagari | Gated | **A cut list:** each row gives (IV file id, `start_time`, `duration`, Hindi, English), so W1 can cut the same span from the **IV original** (not this 16 kHz MP3). 407 of the 2,826 IV files in W1's local sample appear here. Its English needs filtering (meta-text) and is not licence-clean (Llama clause, Q6). Its English audio isn't Bulbul (§3B) |
 | [YODAS](https://huggingface.co/datasets/espnet/yodas) / [YODAS2](https://huggingface.co/datasets/espnet/yodas2) `hi000` | CC BY 3.0 (YouTube CC-BY uploads) | **Trap** (AMBIGUOUS) | 480.79 h with "manual" captions (`hi000`) + 2.75 h automatic (`hi100`) | Mixed YouTube; 16 kHz (yodas), 24 kHz long-form (yodas2) | Card: manual "only indicates that it is uploaded by users, but not necessarily transcribed by a human" | Open | The licence allows redistribution, but only the uploader granted it, not the speakers. Content is multi-speaker or music, and captions are unreliable. Fails "consent compliance" (§3A) on any strict reading (Q5) |
 
 ### A2. Speech-translation corpora (Hindi→English direction)
@@ -114,8 +114,18 @@ The BhasaAnuvaad sources, one by one:
   - 7 noise categories: animal, vehicle_traffic (horns, sirens), baby_child, singing_music, phone_signal_alarm (ringtones), appliance_machine (fans, TV), human_non_speech;
   - per-event start/end times.
 
-  **Use: pick noisy real Hindi clips for Part A** (§4 noise, counted as real hours).
-- **IndicVoices:** IV-ST shows ≥282.9 h of Hindi IV already cut into ~47 s paragraphs with English. IV-R shows that at least 74.6 h of Hindi IV is 44.1 kHz read/extempore (what survived IV-R's quality filter).
+  **Measured** (metadata of all 182 parquets, exact-range reads, 25.5 MB):
+  - **Hindi is 84.7 h / 47,120 clips** (55% of the set), every one with a transcript. By quality: verified 9.7 h, unverified 55.4 h, no-timestamps 19.6 h.
+  - **Clips are short:** p50 6.1 s, p90 10.0 s, max 20.3 s, only 9.8% ≥10 s.
+  - Hindi clips per category: human_non_speech 24,850, vehicle_traffic 11,808, animal 8,406, baby_child 6,147, singing_music 2,965, phone_signal_alarm 1,740, appliance_machine 611. Timestamped event hours: animal 8.4, traffic 8.0, baby_child 5.2, music 4.0.
+  - Top states: Bihar, UP, Jharkhand, Chhattisgarh, Maharashtra, MP.
+  - Schema: `audio` (embedded **WAV PCM 16 kHz mono 16-bit**), `imageFileName, state, district, duration, language, annotationQuality, isTranscriptionAvailable, transcript, NoiseCategory[], NoiseSubCategoryTimeStamp[{category, tag, start, end}]`. The times are strings, in seconds.
+  - **The audio filename encodes the Vaani source recording plus ms offsets.** For example, `…_Krishna-SPECIFIC_00208_11526_19706.wav` is 11.526–19.706 s of that recording. So clips join back to full Vaani recordings, and adjacent segments can be merged into 10–60 s windows.
+  - Transcripts use Vaani conventions: inline noise tags (`<horn>…</horn>`, `<bird sound>`, `[breathing]`, `<PAUSE>`), English in Devanagari followed by its Latin form in braces (`स्कूटर {scooter}`, `एसी {ए_सी} {A_C}`), and `--` for truncation. W4 must strip the braces and tags.
+  - The datasets-server `/statistics` endpoint fails on this repo with "Invalid data found when processing input", so **at least one clip does not decode**. Decode-check every clip we cut.
+
+  **Use: pick noisy real Hindi clips for Part A** (§4 noise, counted as real hours). W1 cuts the window from the Vaani source recording, not from these 6 s segments.
+- **IndicVoices:** IV-ST holds 170.5 h of Hindi IV segments from 17,223 IV files (median 9.2 s; 113.6 h in 10–60 s segments), each with IV file id, start and English. IV-R shows that at least 74.6 h of Hindi IV is 44.1 kHz read/extempore (what survived IV-R's quality filter).
 
 ## B. Text (A-text / Eval)
 
@@ -195,7 +205,7 @@ The helper's report was spot-checked against the OpenSLR 17/20/26/28 pages, the 
 | [DNS Challenge](https://github.com/microsoft/DNS-Challenge) `freesound_*` blobs only | "Only files with CC0 licenses were selected" | ~4.5 GB | Aug (Reading 2) | The AudioSet blobs are YouTube audio: Google's CC BY covers the ID lists, not the audio. **Trap** |
 | [FSD50K](https://zenodo.org/records/4060432) | Per clip: CC0 19,873 / CC-BY 23,506 / BY-NC 6,041 / Sampling+ 1,777 | 108.3 h, 44.1 kHz | Aug (Reading 2), CC0 + CC-BY clips only | Filter by `*_clips_info`, and drop the "Human voice" classes |
 | Freesound "india traffic / street / market / train / mumbai / delhi" | Per file. CC0 counts on 2026-10-14: 148 / 127 / 38 / 34 / 45 / 64 (queries overlap) | A few hundred clips | Aug (Reading 2), CC0 only, after a speech filter | The most realistic open Indian street audio. Expect intelligible speech in the field recordings |
-| [Vaani-Noise-Event](https://huggingface.co/datasets/ARTPARK-IISc/Vaani-Noise-Event-Dataset) | CC BY 4.0 | 154.6 h of *speech* clips, Hindi among them | **A-real selector**, not Aug | It is speech, so it counts as third-party training data under both readings. Use it to choose noisy Part A clips (A5) |
+| [Vaani-Noise-Event](https://huggingface.co/datasets/ARTPARK-IISc/Vaani-Noise-Event-Dataset) | CC BY 4.0 | 154.6 h of *speech* clips at 16 kHz; Hindi 84.7 h / 47,120 clips, median 6.1 s | **A-real selector**, not Aug | It is speech, so it counts as third-party training data under both readings. Use it to choose noisy Part A clips (A5) |
 | **Trap: NC** | ESC-50 (CC BY-NC 3.0; only ESC-10 is CC BY), UrbanSound8K (cc-by-nc-4.0), WHAM! (CC BY-NC 4.0), NISQA corpus ("non-commercial research"), IDMT-Traffic (cc-by-nc-nd) | | Trap | The recipient is a company (§10 R5) |
 | **Trap: SA or unclear** | DEMAND (Zenodo field says cc-by-4.0, its PDF says BY-SA 3.0), QUT-NOISE (CC BY-SA), MicIRP (CC BY-SA 4.0), MIT IR Survey (no licence stated) | | Trap | SA risk exists if trained weights count as adapted material |
 | **Trap: paid / no licence** | CHiME-3/4 backgrounds (LDC only); iNoise (TCS, IEEE DataPort paywall, no licence); [ajajali09/indian-noise-dataset](https://huggingface.co/datasets/ajajali09/indian-noise-dataset) (no licence, partly YouTube, largest class "People Talking") | | Trap | |
@@ -254,7 +264,7 @@ R7 means re-runs must work, and §9.2 means the noise files themselves are never
 
 **A-real**, ranked by closeness to §4 (spontaneous, one speaker, phone/noise, code-mixed) × licence cleanliness:
 
-1. **IndicVoices Hindi** (W1). Extempore + 8 kHz conversational. IV-ST's ~47 s paragraph cuts are a ready segmentation reference.
+1. **IndicVoices Hindi** (W1). Extempore + 8 kHz conversational. IV-ST's 24,182 rows of 10–60 s (113.6 h, with IV file id + offsets) are a ready cut list.
 2. **SPRING-INX Hindi** (W1). Telephone, conversational, ~10% code-mixed.
 3. **Vaani Hindi** (W1). 1,003.78 h transcribed. Pick noisy clips with the Vaani-Noise-Event tags.
 4. **Rural Women ASR v2** (new). ≈87 h of chunks, open, phone mics, IV schema, light code-mix.
@@ -307,12 +317,12 @@ The licence-clean pool is CC BY 4.0 / MS O-UDA, consented collections. Hours are
 |---|---|---|
 | Vaani | 1,003.78 h transcribed | |
 | SPRING-INX | 351 h | W1's number |
-| IndicVoices | ≥282.9 h | Only the part visible through IV-ST. W1 has the full number |
+| IndicVoices | ≥170.5 h | Only the part visible through IV-ST (measured). W1 has the full number |
 | SYSPIN | ≈110 h | Studio |
 | MUCS SLR103 | 100.6 h | |
 | Rural Women | ≈87 h | Chunk sum; unique-source hours are lower |
 | Rasa | 50.8 h | Studio |
-| **Total** | **≈1,990 h** | Ten times the cap |
+| **Total** | **≈1,870 h** | More than nine times the cap |
 
 Excluded from that total:
 - Kathbath (licence conflict).
@@ -342,7 +352,7 @@ Excluded from that total:
 - **W1:**
   - Add Rural Women ASR v2 (open, no gate, IV schema; check unique-source hours and consent).
   - Vaani transcribed Hindi is 1,003.78 h. Use Vaani-Noise-Event tags to pick noisy clips.
-  - The IV-ST ~47 s segments are a cut-list reference.
+  - IV-ST rows (IV file id + `start_time` + `duration`; 113.6 h in 10–60 s) are a cut list. Cut from IV originals, and filter its English (4% meta-text).
   - Resolve the Kathbath licence conflict.
   - Rasa and SYSPIN are low-priority studio options.
   - Never cut the same speech from both IV and IV-R.
@@ -383,13 +393,25 @@ Excluded from that total:
 
 **Open:**
 - Q1–Q9 for organisers.
-- Gated files not inspected, because there is no HF token:
-  - IV-ST parquet columns (the 1.89 GB Hindi file is too small for 283 h of PCM);
-  - Rasa and SYSPIN transcript formats;
-  - SYSPIN sample rate.
-- Not verified: the LinCE licence, the Hindi share of BPCC-H-Daily, and AMR patent status.
+- Not verified: the LinCE licence, the Hindi share of BPCC-H-Daily, AMR patent status, and SYSPIN's original (AIKosh) files, which need registration.
 
-**Blockers:** none for this scout. Deeper checks need an HF token in `.env` (`HF_TOKEN=…`) plus accepted terms on each gated repo:
-- https://huggingface.co/datasets/ai4bharat/IndicVoices-ST
-- https://huggingface.co/datasets/ai4bharat/Rasa
-- https://huggingface.co/datasets/ARTPARK-IISc/Vaani-Noise-Event-Dataset
+**Blockers:** none.
+
+### Status update — 2026-10-14 (gated-access pass)
+
+**Closed, all measured from parquet footers and column reads; no audio stored, scratchpad <5 MB:**
+
+| Item | Finding | Rows updated |
+|---|---|---|
+| IV-ST Hindi columns, and why the file is 1.89 GB | Audio is embedded **MP3, 16 kHz, ≈24 kbps**. The release has **54,562 rows / 170.5 h** (not the paper's 282.9 h / 21.6K) over 17,223 IV files, with 113.6 h in 10–60 s segments. `text` is unpunctuated Devanagari; `en_text` has 4% meta-text artefacts | A1, A5, D, E, G |
+| Rasa format and SR | Embedded **WAV PCM 48 kHz / mono / 16-bit**. One punctuated Devanagari sentence per file, numbers as words. Command-style speech is only 2.0 h of 50.83 h | A1 |
+| SYSPIN format and SR | Per two HF mirrors (original not reachable): one Devanagari sentence per WAV; **48 kHz / 24-bit** (the 44.1 kHz copy is re-encoded). The mirrors carry no licence tag, so source the audio from AIKosh | A1 |
+| Vaani-Noise-Event schema | Embedded **WAV 16 kHz**. Hindi 84.7 h / 47,120 clips, median 6.1 s. Filenames encode the Vaani source and ms offsets. Inline noise tags and `{english}` braces. At least one clip doesn't decode | A5, C1 |
+
+New for W1: the IV-ST cut list, and the Vaani-Noise filename → source-recording mapping. New for W4: the Vaani `{english}` brace convention and the IV-ST unpunctuated text.
+
+**Budget: exceeded.** Network reads were ≈1.7 GB, against the 300 MB asked; disk use was ~0.
+- The cause was one IV-ST summary that opened the file once per row group (546 footer re-reads) with a 256 KB read-ahead cache. That alone pulled 1,605 MB.
+- A first Vaani pass with the same flaw was stopped part-way; its bytes weren't counted.
+- Everything after that used `cache_type="none"` + `pre_buffer=True`, at ~0.13 MB per parquet file (all 182 Vaani files: 25.5 MB).
+- Nothing was written outside the scratchpad, and the HF cache holds none of these repos.

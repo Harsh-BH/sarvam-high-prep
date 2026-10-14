@@ -59,9 +59,9 @@ Everything below was **measured** on files on disk unless it is marked *(paper)*
 | **SPRING-INX** Hindi | "released under CCBY 4.0 license", from the asr.iitm.ac.in JS bundle (the page is a SPA); also CC BY 4.0 on AIKosh for other languages | **Ungated** `https://asr.iitm.ac.in/SPRING_INX/data/SPRING_INX_Hindi_R{1,2}.tar.gz` (R1 26.8 GB, R2 13.8 GB, ~5–18 MB/s). R2 streamed in full | R2: **166.2 h raw / 157.6 h transcribed**, 667 recordings. R1 not streamed. Paper: Hindi total 351 h | Paper: 764 M / 639 F. The release has no speaker IDs: `utt2spk` is per utterance | **Monologues: yes. Conversations: no** (mixed channel) |
 | MUCS 2021 SLR103 | OpenSLR names only a link (`msropendata-web-api.azurewebsites.net/licenses/f1f352a6…`), which **no longer resolves** (DNS fails 2026-10-14). The task file says MS O-UDA; **unverified** | Ungated OpenSLR. Train 4.4 GB, test 258 MB | Test 5.56 h (measured). Train 95.05 h (OpenSLR page) | Test 19; train 59 (page) | **Reject**: read, short |
 | FLEURS `hi_in` | CC BY 4.0 (HF tag) | Ungated HF | **8.71 h**, 2,777 utterances | 1,577 M / 1,200 F utterances; no speaker IDs | **Reject**: read, single-utterance files |
-| Lahaja | **Conflict:** HF tag `mit`, README "CC BY 4.0". Both allow redistribution | Gated (`auto`) | 12.5 h *(card)* | 132 speakers, 83 districts *(card)* | Better as W8c's eval set (it's a benchmark) |
-| Kathbath | **Conflict, verified by the scout** (`research/datasets.md`): CC BY 4.0 on HF vs **CC BY-SA 4.0 on AIKosh**. The README also says CC0 for packaging | Gated (`auto`); Hindi 16.6 GB parquet | 1,684 h across 12 languages *(card)* | 1,218 across 12 languages *(card)* | **HOLD for Part A** until the licence is resolved (W0 / organiser Q). Read IndicCorp sentences, short, so low value anyway |
-| Vaani | CC BY 4.0 (HF tag). The gate collects name, company, purpose | Gated (`auto` + form). `audio/Hindi` is 10.1 M utterances in **1.7 TB** of parquet (card YAML) | **1,003.78 h transcribed Hindi** in [Vaani-transcription-part](https://huggingface.co/datasets/ARTPARK-IISc/Vaani-transcription-part) (CC BY 4.0, gated `auto`). Scout figure, not re-measured | 156K across all languages *(card)* | **Candidate #2 for real noisy audio.** [Vaani-Noise-Event](https://huggingface.co/datasets/ARTPARK-IISc/Vaani-Noise-Event-Dataset) tags can *select* real noisy clips (scout). Image-prompted spontaneous speech, utterance-level. Its session shape (10–60 s contiguous, single speaker) is unmeasured until we have a token |
+| Lahaja | **Conflict:** HF tag `mit`, README "CC BY 4.0". Both allow redistribution | Gated (`auto`) | 12.5 h *(card)* | 132 speakers, 83 districts *(card)* | Better as W8c's eval set (it's a benchmark) (measured in Round 2) |
+| Kathbath | **Conflict, verified by the scout** (`research/datasets.md`): CC BY 4.0 on HF vs **CC BY-SA 4.0 on AIKosh**. The README also says CC0 for packaging | Gated (`auto`); Hindi 16.6 GB parquet | 1,684 h across 12 languages *(card)* | 1,218 across 12 languages *(card)* | **HOLD for Part A** until the licence is resolved (W0 / organiser Q). Read IndicCorp sentences, short, so low value anyway (measured in Round 2) |
+| Vaani | CC BY 4.0 (HF tag). The gate collects name, company, purpose | Gated (`auto` + form). `audio/Hindi` is 10.1 M utterances in **1.7 TB** of parquet (card YAML) | **1,003.78 h transcribed Hindi** in [Vaani-transcription-part](https://huggingface.co/datasets/ARTPARK-IISc/Vaani-transcription-part) (CC BY 4.0, gated `auto`). Scout figure, not re-measured | 156K across all languages *(card)* | **Candidate #2 for real noisy audio.** [Vaani-Noise-Event](https://huggingface.co/datasets/ARTPARK-IISc/Vaani-Noise-Event-Dataset) tags can *select* real noisy clips (scout). Image-prompted spontaneous speech, utterance-level. Session shape measured in **Round 2** below: short segments, mostly < 10 s |
 | Rural Women ASR v2 (AI4Bharat) | CC BY 4.0 in the README (scout); consent statement UNVERIFIED | **Open**, no gate (31.4 GB Hindi) | ≈87 h of chunks (scout); unique-source hours lower | 99.7% female; rural MP/UP/BR; phone mic; 48 kHz (scout) | **New candidate:** IV schema, so `load_iv`/`cut_pilot` nearly apply. Not sampled by W1 yet (disk budget). Phone-recorded, close to §4 |
 | IndicVoices-R | CC BY 4.0 | Gated | 74.6 h (paper, via scout) | — | **Excluded.** It is the same speech as IV, enhanced into new files. **Never cut the same speech from both IV and IV-R**: hours would be double-counted (§3A union is per source file) |
 
@@ -280,3 +280,173 @@ Three items need ears:
 
 - `w1/`: `tar_scan.py`, `inventory.py`, `cut_pilot.py`, `asr_check.py`, `ids.tsv`. Commit `ids.tsv`.
 - `data/w1/` (gitignored): `pilot/`, `pool/` (with `asr_check.tsv`), `iv_full/` (valid, for W8c), `iv_train/` (pool sources + all JSONs), `spring/` (R2 transcripts + 1.5 GB audio sample), `fleurs/`, `mucs/`. Total 5.9 GB.
+
+## Round 2: gated sets measured, 2026-10-14
+
+With HF access to Vaani-transcription-part, Vaani-Noise-Event, Kathbath and Lahaja, I measured all four on samples.
+
+**Method.** `w1/hf_sample.py` does ranged parquet reads only. **No audio was written to disk:** clips are decoded in memory. There are two modes:
+
+- **Audio sample:** a few row groups per shard, giving format, sample rate and duration from the embedded bytes.
+- **`--columns` (metadata only):** exact byte ranges of the chosen column chunks (e.g. `audio.path`, `transcript`, `duration`) across every row group. That's about 0.15 MB per 480 MB shard.
+
+The metadata indexes stay in `data/w1/hf/` (72 MB, no audio), and W4 can use them to pick segments. Full-corpus indexing ran at roughly 2–10 min per shard because of per-request overhead, so I stopped where the answer was clear. Coverage is stated per row.
+
+**Shards are clustered** (by state, split, gender, language or annotation quality), so shares from partial reads aren't corpus-wide. Card totals are authoritative where given.
+
+| Set | Sampled | Native format | Unit and session shape | Duration p10 / 50 / 90 / max | ≥ 10 s | Transcript level and tags | Code-mix | Number words / min | Verdict |
+|---|---|---|---|---|---|---|---|---|---|
+| **Vaani-transcription-part, Hindi** (1,003.78 h, 661,593 rows, card) | Audio: 990 rows from 4 shards. Metadata: all 41 test shards = 92,734 segments, **146.2 h**, 9,956 speakers, 26 states / 129 districts | WAV 16 kHz mono (990/990) | See note 1 | 2.6 / 5.1 / 9.5 / 20.5 s | **7.7% of segments**, 24.0 h of 146 h (if representative ≈ 165 h corpus-wide [INF]) | See note 2 | 10.9% `{gloss}` / words | 6.6 | See note 3 |
+| **Vaani-Noise-Event, Hindi** (154.6 h all languages, card) | Audio: 364 Hindi rows from 3 shards. Metadata: 28/182 shards = 13,943 rows, 4,464 Hindi = 7.8 h | WAV 16 kHz | **The same segments as Vaani-transcription-part** (same filename scheme, offsets in ms) | – / 5.8 / 9.9 / 20.3 s | 9.2% | Re-annotated: spans (`<horn> … </horn>`), commas, `<PAUSE>`. Only 2.3% of joined transcripts are byte-identical to the transcription-part text | – | – | See note 4 |
+| **Kathbath, Hindi** | Audio: 200 rows from 2 shards. Metadata: 15/34 shards = 43,004 rows, 59.7 h (these shards are all female, 53 speakers) | FLAC 16 kHz mono | **Read IndicCorp sentences**, one per file; every sentence unique (43,003/43,004) | 3.5 / 4.8 / 6.6 / 17.6 s | **0.4%** | Prompt text; no tags, no Latin, no digits | 0 | 1.95 | **HOLD stands** (licence). Even cleared, it's unusable for 10–60 s sessions |
+| **Lahaja** | **All** 6,152 rows (metadata) + 200 rows of audio | WAV 16 kHz mono | IV tooling: segments of 2,243 recordings (IV-style numeric `fname`). Segments only, no long-form | 1.1 / 6.3 / 14.4 / 27.8 s | 26% (6.2 h) | IV-style `verbatim` (L1, `[uhh]`, `[inhaling]`; 2.2 tags/100 words) + `normalized` with `[Latin]` | 15.2% | 6.3 | **Eval only (W8c)**: 12.32 h, 132 speakers, 83 districts, mostly non-native Hindi speakers |
+
+1. **Vaani segments.** The filename encodes `…_<speaker>_<seq>_<image>_<start ms>_<end ms>.wav`. Each segment is a cut of one image-description recording; the parent isn't distributed here.
+   - The parent recording is at most ~30 s (p50 of the maximum segment end is 13.9 s). 88% of parents contribute a single transcribed segment.
+   - Gaps between a parent's transcribed segments: p50 1.1 s, p90 9.9 s.
+2. **Vaani transcript level.** Spontaneous L1-style text. English is in Devanagari with a `{latin}` gloss (`जंगल {jungle}`). Tags are paired spans (`<noise> … </noise>`, `<static noise>`) plus `[breathing]` and `<pause>`.
+   - 8.1% of segments carry second-voice or unintelligible tags.
+   - **24.1% of segments end in `--`** (99% at the segment end): the speaker was cut off mid-utterance.
+3. **Vaani verdict: a usable real source, but only as short records.**
+   - A record = one segment file as distributed (`source_file` = that file, `start` 0). Only segments ≥ 10 s count: 7.7%, minus those with a trailing `--` or a second-voice tag.
+   - Windows over the parent recordings would give 35 h per 146 h, but only 12–17 s long. That needs the main Vaani repo, which **still returns 403**: accept the terms at https://huggingface.co/datasets/ARTPARK-IISc/Vaani if we want that.
+4. **Noise-Event verdict: a selector over Vaani segments, not a separate source.**
+   - **The join is on the audio filename.** 555 of 4,464 Hindi noise clips (12.4%) are in the test-split index alone. If every clip were in the transcription set, 17.8% (the test split's share of rows) would match, so ≈ 70% are [INF].
+   - Noise timestamps are relative to that same segment, so they carry over to a record cut from it unchanged.
+   - Hindi rows in the indexed part: 60% `verified_timestamps`, 29% unverified, 11% none (the card gives 12% verified overall, so these shards are quality-clustered).
+   - Categories: `human_non_speech` 2,787, `vehicle_traffic` 1,260, `animal` 846, **`baby_child` 521**, `phone_signal_alarm` 225, `singing_music` 144.
+   - 22.5% have a second voice (a tag or `baby_child`).
+   - **Usable as records:** clips ≥ 10 s with no second voice and no trailing `--` are 293 of 4,464, i.e. 1.0 h of 7.8 h (13%).
+
+**What this changes for Part A:**
+
+- **IndicVoices stays the primary real source.** It has long-form, single-speaker 10–60 s windows, and SPRING-INX monologues are the second.
+- **Vaani's 1,003.78 h is mostly not session-shaped.** About 1 in 13 segments is ≥ 10 s, a quarter end mid-utterance, and none exceeds ~20 s.
+  - It is useful for short, noisy, regionally diverse real records (26 states in one split vs IV's Hindi belt). Noise-Event lets us pick the noisy ones.
+  - §3A has no minimum clip length, but §4 sessions run 10–60 s [INF: short records are allowed but match the test less well].
+- **Lahaja → W8c** as an accent-diverse real eval set (and not in Part A, to keep it clean).
+- **Kathbath:** HOLD, low value.
+
+### Status, 2026-10-14 (round 2)
+
+**Done:** all four gated sets measured on samples, and the inventory rows above filled. `w1/hf_sample.py` added (ranged audio sampling plus the metadata-only `--columns` mode).
+
+- Disk: +72 MB (metadata only). `data/w1` total ≈ 6.0 GB. No GPU used.
+
+**Not done:**
+
+- Full-corpus Vaani and Noise-Event indexes, which would give exact corpus-wide shares and the exact join rate. They need roughly 2–4 h of throttled requests. Run them overnight if the exact numbers matter:
+  - `HF_THREADS=16 uv run … w1/hf_sample.py "<glob>" --columns audio.path --out …`
+- Kathbath index stopped at 15/34 shards.
+
+**Asks:**
+
+- Accept the terms on the **main** Vaani repo (403 today) if we want 12–17 s windows over parent recordings.
+- W0: add a Vaani `source_file` rule to SPEC §4. I propose `vaani/<segment filename>`, with the parent recording and offsets in `_w1`, so hours union on the segment files is exact and parents are traceable.
+
+## Round 3: drop-not-review recut, 2026-10-14
+
+**Policy** (`docs/superpowers/specs/2026-10-14-s3-ingestion-cleaning-design.md` §3.3): one human, no annotators, so any clip that would need a listener is **dropped**, not reviewed.
+
+**Cutter change** (`w1/cut_pilot.py`):
+
+- **New default.** Segments tagged `stammers`, `uh-huh` or `ugh`, in either `[..]` or `<..>` form and any case, now behave like `unintelligible`: the segment is dropped and the clip breaks there. `--keep-disfluency-tags` turns this off.
+  - The match is exact: `[laugh]`, `[ughh]` and `[uh-uhh]` don't match. Self-checks cover this.
+- **`w1/retired.tsv`** is the new tracked **burn register** (id + reason). Commit it with `ids.tsv`.
+  - A burned id is never issued again, and a normal (non-recut) run skips any span whose registered id is burned.
+- **`--recut`** does the following:
+  - Moves `manifest.jsonl` to `manifest.v1.jsonl` and `pilot/manifest.jsonl` to `pilot/manifest.v1.jsonl`.
+  - Keeps every v1 clip not in `retired.tsv` **byte-for-byte** (same id, same span).
+  - Writes retired clips to `pool/rejects.jsonl` with `_reject_reason`, and deletes their audio. It can be re-cut from the source span if ever needed.
+  - Cuts **replacements** from the long-form files of the retired clips under the new rule:
+    - segments under kept clips count as used, so they are never cut twice and pads stop at their edge;
+    - only windows that overlap a retired span are kept;
+    - each replacement gets a fresh id from `ids.tsv`.
+  - A retired clip with nothing droppable inside (rec-000046, incomplete transcript) is **burned whole**, and nothing is re-cut from its span.
+- **Retired:** W4's P0 list (`data/w4/review.tsv`), 103 ids. That's the 102 clips carrying stammers (84), ugh (12) or uh-huh (7) tags, one with both, plus rec-000046.
+
+**Before and after:**
+
+| Scenario (native rate) | v1 clips / h | Retired clips / h | Kept | Replacements clips / h | v2 clips / h |
+|---|---|---|---|---|---|
+| Conversation (8 kHz) | 402 / 1.716 | 55 / 0.263 | 347 | 9 / 0.044 | 356 / 1.497 |
+| Extempore (44.1 kHz) | 245 / 2.041 | 48 / 0.461 | 197 | 31 / 0.200 | 228 / 1.780 |
+| Read (44.1 kHz) | 64 / 0.248 | 0 / 0.000 | 64 | 0 / 0.000 | 64 / 0.248 |
+| **Total** | **711 / 4.005** | **103 / 0.724** | **608** | **40 / 0.244** | **648 / 3.526** |
+
+- **Net loss:** 0.479 h, **12.0% of pool hours**, within the ≈18% the spec budgets. Speakers fall from 325 to 301.
+- **Replacements** are `rec-000712`–`rec-000751`, 10.6–41.6 s each. Burned ids are `rec-…` per `w1/retired.tsv` (inside 000001–000711).
+- **Pilot:** 50 → **40** (10 pilot clips retired; no replacements added). The old list is `pilot/manifest.v1.jsonl`.
+
+**Validator** (`uv run validate.py … --partial`):
+
+- Pool: **648 records, 0 violations**, real 3.526 h over 510 source files.
+- Pilot: 40 records, 0 violations, 0.243 h.
+- `manifest.v1.jsonl` no longer validates, because the rejected audio is gone. That's by design: it's an archive.
+
+**Checks** (all pass):
+
+- The 608 kept lines are byte-identical to v1.
+- `rejects.jsonl` is exactly the burned set, every reject has a reason, and no burned id is in the manifest.
+- Every burned id stays registered in `ids.tsv`; 751 rows, all unique.
+- Zero replacements carry a droppable or second-voice tag.
+- Zero overlapping clips within any source file, and nothing overlaps rec-000046's span.
+- `pool/audio` and `pilot/audio` contain exactly the manifest's files.
+- **Replacement sanity:** the CTC-ASR check on the 40 replacements (`pool/asr_check_replacements.tsv`) gives CER p50 0.072 (conversation, 9 clips) and 0.075 (extempore, 31 clips), with **0** untranscribed-speech runs, so the offsets are right.
+  - `pool/asr_check.tsv` still describes v1. I left it in place in case W4 reads it by path.
+
+### Status, 2026-10-14 (round 3)
+
+**Done:** drop rule (default on, with a flag), burn register, recut. Pool v2 is 648 clips / 3.526 h and validates with 0 violations.
+
+**Handoffs:**
+
+- **W4:** P0 is resolved by retirement. The 40 replacements need your normal pass: conversion, then the P1 ASR-disagreement and P2 entity checks. Under §3.3, a P1 hit means the clip is retired here too: send me the ids and I'll add them to `retired.tsv` and re-run `--recut`.
+- **W7:** ids listed in `w1/retired.tsv` are burned for good. The G3 freeze should treat them as "never released", not "removed".
+
+**Note:** from now on, fresh cuts drop these tags at cut time, so this P0 class shouldn't recur.
+
+## Round 4: pinned-ffmpeg cut stage (S3 plan Task 10), 2026-10-14
+
+**Cutter change** (`w1/cut_pilot.py`; not committed, the master commits):
+
+- **All audio goes through `pipeline/ffmpeg.cut`, the pinned BtbN `n9.0.2-17-g2a571b6068` build, sha256-checked.**
+  - `cut()` is now a thin ms→s wrapper over it, so fresh cuts, `--recut` and the stage mode all use the pinned build. The system ffmpeg is no longer called.
+  - The ms→s→ms round trip is exact; a self-check covers it.
+- **Stage contract mode:**
+  - `uv run w1/cut_pilot.py --in RECORDS.jsonl --audio-dir DIR --out OUT` re-cuts each record's existing `[source.start, source.end]` from `DIR/<source.source_file>`.
+  - `DIR` mirrors the bucket's `raw/` layout, as `pipeline/rebuild.py` does. Locally, `data/w1/raw/indicvoices → ../iv_train` (a symlink in gitignored `data/`).
+  - Outputs follow the contract:
+    - `OUT/records.jsonl`: input lines verbatim, so ids, intervals and `_rev` are unchanged.
+    - `OUT/audio/<id>.wav`.
+    - `OUT/rejects.jsonl`: `{"id","stage":"cut","rule","detail"}`. Rule `retired` holds every burned id from `w1/retired.tsv` with its reason, and `source_missing` is for a missing source.
+  - Resume and torn-line repair work as in `pipeline/audio_qc.py`.
+  - A PEP 723 header (numpy) makes `uv run w1/cut_pilot.py` work.
+
+**Re-cut of the whole pool** into `data/w1/pool_pinned/`, from `data/w1/pool/manifest.jsonl` (648 clips) in 30 s:
+
+| Check | Result |
+|---|---|
+| `records.jsonl` vs `pool/manifest.jsonl` | **byte-identical**: same 648 ids, intervals, `_rev` |
+| `rejects.jsonl` | 103, all `cut`/`retired`, exactly the `w1/retired.tsv` set |
+| `validate.py --partial --audio-dir data/w1/pool_pinned` | **648 records, 0 violations**, real 3.526 h over 510 source files |
+| `pipeline/ffmpeg.cut` called twice per clip, directly from the record's seconds | **648/648 identical to each other and to `pool_pinned/audio`** |
+| Resume (same command again) | no-op: `already done: 751`, files unchanged |
+| vs the old `pool/audio` (system ffmpeg n9.0.1) | **0/648 byte-identical**: every clip differs by at most **1 LSB**, on 0.1% of samples (p50; max 0.2%) |
+
+**Consequences:**
+
+- **`data/w1/pool_pinned/` supersedes `data/w1/pool/audio` for anything rebuilt or released.** The old audio can never be reproduced by `rebuild.py`.
+- Text stages keyed by id carry over unchanged: W4's transcripts and review list.
+- Audio-derived measurements on the old audio differ by at most 1 LSB, which is acoustically irrelevant. Recompute anything that stores audio hashes.
+- Disk: +585 MB (`pool_pinned`). The machine's free space is down to 8.4 GB because of other streams. `data/w1/pool/audio` (≈ 0.6 GB) can be deleted once the master has seeded `stages/cut/` from `pool_pinned`.
+
+### Status, 2026-10-14 (round 4)
+
+**Done:** cutter on the pinned ffmpeg, plus a stage-contract mode. `data/w1/pool_pinned/` holds 648 records with audio and 103 retired rejects. It validates with 0 violations, and every clip is reproduced byte-for-byte by `pipeline/ffmpeg.cut`.
+
+**For the master** (Task 10 Step 3):
+
+- Seed `stages/cut/<run>/` from `data/w1/pool_pinned/` with `s3.upload_dir`, not from `pool/` or `pilot/`. Those still hold system-ffmpeg audio.
+  - The 40-clip pilot is a subset of these ids. Its pinned audio is `pool_pinned/audio/<id>.wav` for the ids in `data/w1/pilot/manifest.jsonl`.
+- Files to commit (all still uncommitted): `w1/cut_pilot.py` (rounds 3–4), `w1/ids.tsv` (+40 replacement ids, round 3), `w1/retired.tsv` (burn register, round 3), `w1/hf_sample.py` (round 2), `tasks/W1-real-audio.md`.
