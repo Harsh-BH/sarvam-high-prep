@@ -91,6 +91,9 @@ def main():
     assert not (bench / "records.jsonl").read_text() and len(open(bench / "takes.jsonl").readlines()) == 3
     assert len(calls) == n  # take 1 of every script was already archived: bench re-used it
 
+    n, mins = tts.listen(out, Path(tempfile.mkdtemp()), per_gender=1, fillers=1)
+    assert n == 2 and mins > 0  # one voice per gender; no filler in these scripts
+
     assert tts.to24k(tts.wav_bytes(tts.np.zeros(22050, "float32"), 22050)) == tts.wav_bytes(tts.np.zeros(24000, "<i2"), 24000)
     print("ok: tts stage")
 

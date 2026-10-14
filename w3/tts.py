@@ -8,6 +8,7 @@
     uv run w3/tts.py alloc SCRIPTS.jsonl          # record ids for new scripts -> w3/ids.tsv; commit before any run
     uv run w3/tts.py upload SCRIPTS.jsonl STAGE   # -> stages/STAGE/<run>/records.jsonl + LATEST, for run.py --in STAGE
     uv run w3/tts.py report SCRIPTS.jsonl DIR...  # bench tables (first takes) from DIR/takes.jsonl
+    uv run w3/tts.py listen RUN_DIR OUT_DIR       # the <= 10 min listening list for Harsh from a finished run
 
 Input: W2 scripts (tasks/W2-scripts.md: pid, tts_dev, hi_text, sentences, entities, en_words, chars, gender).
 --audio-dir is unused: scripts have no audio. Per script: a voice of the script's gender (stable hash of pid, from
@@ -347,6 +348,7 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
             key = archive.request_key(req)
             row = takes.get(key)
             if row is None:
+                t_asr = time.time()
                 with tempfile.NamedTemporaryFile(suffix=".wav") as f:
                     f.write(b), f.flush()
                     for m, fn in asr.items():
@@ -360,6 +362,7 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
                 why = qa.rules(q, dur) + ([NO_SUBS] if len(q["subs"]) == 1 else [])
                 row = {"pid": s["pid"], "id": rid, "take": take, "key": key, "engine": engine, "voice": v["voice"],
                        "gender": v["gender"], "dur": round(dur, 3), "sr": meta["sr"], "secs": meta["secs"],
+                       "asr_secs": round(time.time() - t_asr, 2),
                        "chars": s["chars"], "tags": s.get("tags", []), **q, "why": why,
                        "verdict": "reject" if why else "keep"}
                 takes[key] = row
@@ -440,6 +443,31 @@ def report(scripts, dirs):
         f"{e}: " + ", ".join(f"{w} {n}" for (e2, w), n in sorted(why.items(), key=lambda x: -x[1]) if e2 == e) for e in engines))
 
 
+def listen(run, out, per_gender=6, fillers=4):
+    """The one list for Harsh (<= 10 min): one clip per voice for `per_gender` voices of each gender (Indian accent?
+    gender right?), plus clips whose transcript has a filler (no ASR keeps fillers, W4). Shortest records first."""
+    run, out = Path(run), Path(out)
+    recs = sorted(jsonl(run / "records.jsonl"), key=lambda r: (r["duration"], r["id"]))
+    pick, voices = [], {}
+    for r in recs:
+        g = r["_w2"]["gender"]
+        if r["source"]["voice"] not in voices and sum(v == g for v in voices.values()) < per_gender:
+            voices[r["source"]["voice"]] = g
+            pick.append((r, f"native Indian Hindi accent? a {'female' if g == 'f' else 'male'} voice?"))
+    for r in recs:
+        f = [w for s in r["sentences"] for w in s["hi_text"][:-1].split() if w in qa.FILLERS]
+        if f and r not in [x for x, _ in pick] and len(pick) < 2 * per_gender + fillers:
+            pick.append((r, f"is the filler '{' '.join(f)}' audible where the transcript has it?"))
+    (out / "audio").mkdir(parents=True, exist_ok=True)
+    with open(out / "listen.tsv", "w", encoding="utf-8") as f:
+        f.write("n\tfile\tid\tvoice\tquestion\ttranscript\tanswer\n")
+        for i, (r, q) in enumerate(pick, 1):
+            (out / "audio" / f"{i:02d}-{r['id']}.wav").write_bytes((run / r["audio"]).read_bytes())
+            text = " ".join(s["hi_text"] for s in r["sentences"])
+            f.write(f"{i}\taudio/{i:02d}-{r['id']}.wav\t{r['id']}\t{r['source']['voice']}\t{q}\t{text}\t\n")
+    return len(pick), sum(r["duration"] for r, _ in pick) / 60
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "alloc":
@@ -447,6 +475,10 @@ def main(argv=None):
         return
     if argv and argv[0] == "report":
         return report(jsonl(argv[1]), argv[2:])
+    if argv and argv[0] == "listen":
+        n, mins = listen(argv[1], argv[2])
+        print(f"{n} clips, {mins:.1f} min of audio -> {argv[2]}/listen.tsv")
+        return
     if argv and argv[0] == "upload":
         print(f"stages/{argv[2]}/{upload(argv[1], argv[2])}: uploaded, LATEST moved")
         return
