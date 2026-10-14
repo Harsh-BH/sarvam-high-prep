@@ -14,7 +14,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 sys.path[:0] = [str(ROOT / "pipeline"), str(ROOT / "w6")]
 import archive, s3 as store  # noqa: E402
-from translate import IT2, CAP_INR, it2_request  # noqa: E402
+from translate import IT2, CAP_INR, it2_request, prefill_spent  # noqa: E402
 
 
 def main():
@@ -30,7 +30,7 @@ def main():
     print(f"{len(recs)} records, {len(todo)} not archived", file=sys.stderr)
     if not todo:
         return
-    archive.spent("w6")  # scans the whole archive once; do it before the GPU work, not after
+    prefill_spent()  # scans the whole archive once; do it before the GPU work, not after
     import torch
     from IndicTransToolkit.processor import IndicProcessor
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer

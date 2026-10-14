@@ -39,7 +39,7 @@ def fake_llm(name, system, user, take, max_tokens):
 
 
 tr.llm = fake_llm
-archive.spent = lambda *a, **k: 0.0
+tr.prefill_spent = lambda *a, **k: 0.0
 args = type("A", (), {"engine": "mistral3", "judge": "gptoss", "no_repair": False})()
 
 # 1. translate -> judge flags the number -> repair -> re-judge clean: repaired, filler and curly quote cleaned

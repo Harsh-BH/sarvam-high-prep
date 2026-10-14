@@ -124,6 +124,16 @@ def llm(name, system, user, take, max_tokens):
     return resp["text"], "archive/api/bedrock/" + archive.request_key(req)
 
 
+def prefill_spent(stream="w6"):
+    """archive.spent() GETs every archived call one by one: minutes once there are a few thousand. Same sum, 32 GETs
+    at a time, written into its cache before the worker threads start. ponytail: report to master for a spend index."""
+    if stream not in archive._spent:
+        ks = [k for k in store.keys("archive/api/") if k.endswith(".json")]
+        metas = ThreadPoolExecutor(32).map(lambda k: json.loads(store.get(k)), ks)
+        archive._spent[stream] = sum(m.get("inr", 0) for m in metas if m.get("stream") == stream)
+    return archive._spent[stream]
+
+
 def it2_request(his):
     return {**IT2, "src_lang": "hin_Deva", "tgt_lang": "eng_Latn", "num_beams": 5, "segments": his}
 
@@ -337,7 +347,7 @@ def main():
             p.write_bytes(b[: b.rfind(b"\n") + 1])  # a crash tore the last line: drop it, that id is redone
     done = {json.loads(l)["id"] for f in ("records.jsonl", "rejects.jsonl") if (a.out / f).exists() for l in open(a.out / f)}
     todo = [r for r in map(json.loads, open(a.inp, encoding="utf-8")) if r["id"] not in done]
-    archive.spent("w6")  # fill the spend cache once, before the worker threads race to do it
+    prefill_spent()
     patches = {}
     if PATCHES.exists():
         for l in open(PATCHES, encoding="utf-8"):

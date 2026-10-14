@@ -48,6 +48,7 @@ def claims(v):
 
 
 def build(a):
+    tr.prefill_spent()
     recs = load(a.dirs)
     v2 = second_judge(recs, a.judge2)
     both, one, none = [], [], []

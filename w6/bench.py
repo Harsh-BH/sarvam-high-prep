@@ -105,6 +105,7 @@ KINDS = ["number", "negation", "unit", "name", "omission", "correction"]
 
 
 def inject(d, judge, per_kind):
+    tr.prefill_spent()
     recs = load(d)
     jobs = []
     for kind in KINDS:
