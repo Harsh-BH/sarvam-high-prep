@@ -30,7 +30,7 @@ BANK = [{"voice": v, "engine": "fake", "gender": g, "ref": "", "ref_text": "", "
         for v, g in (("A", "f"), ("B", "f"), ("C", "m"))]
 
 
-def run(out, scripts, answers, f, spool, synth=None, **kw):
+def run(out, scripts, answers, f, spool, synth=None, engine="fake", **kw):
     """answers: hyps in call order (both ASRs hear the same); synth: optional wrapper around the fake engine."""
     it = iter(answers)
     cur = {}
@@ -39,7 +39,7 @@ def run(out, scripts, answers, f, spool, synth=None, **kw):
         cur["h"] = next(it)
         return cur["h"]
     ids = {tts.text_key(s): (f"rec-4{i:05d}", s["pid"]) for i, s in enumerate(S, 100)}
-    tts.stage(scripts, out, "fake", s3=f, synth=synth or tts.load_fake(), asr={"w2v": asr_w, "ic": lambda x: cur["h"]},
+    tts.stage(scripts, out, engine, s3=f, synth=synth or tts.load_fake(), asr={"w2v": asr_w, "ic": lambda x: cur["h"]},
               load16k=lambda p: None, ids=ids, bank=BANK, spool=spool, **kw)
 
 
@@ -90,6 +90,17 @@ def main():
     run(bench, S, ["x", "y", GOOD["w2-00003"]], f, spool, bench=True)
     assert not (bench / "records.jsonl").read_text() and len(open(bench / "takes.jsonl").readlines()) == 3
     assert len(calls) == n  # take 1 of every script was already archived: bench re-used it
+
+    tts.ENGINES["fake2"] = {**tts.ENGINES["fake"], "model": "w3-selfcheck-tone-2"}  # two engines, split by pid
+    mix = Path(tempfile.mkdtemp())
+    S2 = [script(f"w2-1{i:04d}", ["नमस्ते", "जी"] + ["हाँ"] * i, [], "f") for i in range(12)]
+    GOOD.update({x["pid"]: x["hi_text"][:-1] for x in S2})
+    ids2 = {tts.text_key(x): (f"rec-49{i:04d}", x["pid"]) for i, x in enumerate(S2)}
+    it = iter([GOOD[x["pid"]] for x in S2])
+    tts.stage(S2, mix, "fake,fake2", s3=f, asr={"w2v": lambda x: next(it)}, load16k=lambda p: None, ids=ids2,
+              bank=BANK, spool=spool)
+    models = {json.loads(l)["source"]["model"] for l in open(mix / "records.jsonl")}
+    assert models == {"w3-selfcheck-tone", "w3-selfcheck-tone-2"}, models
 
     n, mins = tts.listen(out, Path(tempfile.mkdtemp()), per_gender=1, fillers=1)
     assert n == 2 and mins > 0  # one voice per gender; no filler in these scripts

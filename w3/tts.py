@@ -307,9 +307,9 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
         p.touch()
         if (b := p.read_bytes()) and not b.endswith(b"\n"):
             p.write_bytes(b[: b.rfind(b"\n") + 1])  # a crash tore the last line: drop it, that script is redone
-    E = ENGINES[engine]
+    engines = engine.split(",")  # several: each script goes to one, by a stable hash of its pid (acoustic variety)
+    banks = {e: bank or voices(e, ENGINES[e]["clone"]) for e in engines}
     ids = ids_table() if ids is None else ids
-    bank = voices(engine, E["clone"]) if bank is None else bank
     takes = {r["key"]: r for r in jsonl(out / "takes.jsonl")}
     done = {r["id"] for f in ("records.jsonl", "rejects.jsonl") for r in jsonl(out / f)}
     done_pids = {r["pid"] for r in takes.values()} if bench else set()
@@ -333,25 +333,28 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
     if not todo:
         return
     hyps = {m.stem: {r["key"]: r["hyp"] for r in jsonl(m)} for m in (out / "asr").glob("*.jsonl")}
-    synth = synth or E["load"]()
+    synths = {}
     if asr is None:
         asr, load16k = load_asr()
     for m in asr:
         hyps.setdefault(m, {})
-    service = f"tts-{engine}"
 
     def call(req):
         t = time.time()
-        x, sr = synth(req["text"], voice_row[req["voice"]], req["seed"])
+        if req["engine"] not in synths:
+            synths[req["engine"]] = synth or ENGINES[req["engine"]]["load"]()
+        x, sr = synths[req["engine"]](req["text"], voice_row[req["voice"]], req["seed"])
         b = wav_bytes(x, sr)
         return {"sr": sr, "secs": round(time.time() - t, 2), "dur": round(seconds(b)[0], 3)}, b
 
-    voice_row = {v["voice"]: v for v in bank}
+    voice_row = {v["voice"]: v for b in banks.values() for v in b}
     for rid, s in todo:
-        v = pick_voice(s, bank)
+        eng = engines[int(hashlib.sha256(f"engine {s['pid']}".encode()).hexdigest()[:8], 16) % len(engines)]
+        E, service = ENGINES[eng], f"tts-{eng}"
+        v = pick_voice(s, banks[eng])
         tried = []
         for take in range(1, (1 if bench else max_takes) + 1):
-            req = {"engine": engine, "model": E["model"], "rev": E["rev"], "voice": v["voice"], "ref": v["ref"],
+            req = {"engine": eng, "model": E["model"], "rev": E["rev"], "voice": v["voice"], "ref": v["ref"],
                    "text": s["tts_dev"], "seed": take, "take": take, **({"opts": E["opts"]} if "opts" in E else {})}
             # own GPU, no API bill: inr 0, no cap
             meta, b = archive.archive_call(service, req, call, stream="w3", inr=0.0, cap_inr=float("inf"), s3=s3, spool=spool)
@@ -367,10 +370,10 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
                             with open(out / "asr" / f"{m}.jsonl", "a", encoding="utf-8") as h:
                                 h.write(json.dumps({"key": key, "hyp": hyps[m][key]}, ensure_ascii=False) + "\n")
                     q = qa.measure(s, {m: hyps[m][key] for m in asr}, f.name)
-                q["spc_rel"] = None if (ref := spc_ref(list(takes.values()), v["voice"], engine)) is None else q["spc"] / ref
+                q["spc_rel"] = None if (ref := spc_ref(list(takes.values()), v["voice"], eng)) is None else q["spc"] / ref
                 dur = seconds(b)[0]
                 why = qa.rules(q, dur) + ([NO_SUBS] if len(q["subs"]) == 1 else [])
-                row = {"pid": s["pid"], "id": rid, "take": take, "key": key, "engine": engine, "voice": v["voice"],
+                row = {"pid": s["pid"], "id": rid, "take": take, "key": key, "engine": eng, "voice": v["voice"],
                        "gender": v["gender"], "dur": round(dur, 3), "sr": meta["sr"], "secs": meta["secs"],
                        "asr_secs": round(time.time() - t_asr, 2),
                        "chars": s["chars"], "tags": s.get("tags", []), **q, "why": why,
@@ -396,7 +399,7 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
                                   "synthetic": True, "model": E["model"], "voice": v["voice"]},
                        "sentences": [{"hi_text": t} for t in s["sentences"]],
                        "_w2": {k: x for k, x in s.items() if k not in ("_gen", "sentences", "hi_text")},
-                       "_w3": {"text_key": text_key(s), "engine": engine, "rev": E["rev"], "take": take,
+                       "_w3": {"text_key": text_key(s), "engine": eng, "rev": E["rev"], "take": take,
                                "take_key": take_key, "rejected_takes": tried, "src_rate": meta["sr"]},
                        "_qa": {"tts": {k: row[k] for k in ("best_cer", "cer", "ent_n", "en_n", "spc_rel", "pause", "lead",
                                                            "trail", "asrs")}},
@@ -409,7 +412,7 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
             if not bench:
                 with open(out / "rejects.jsonl", "a", encoding="utf-8") as f:
                     detail = "; ".join(f"take{r['take']}: {','.join(r['why'])}" for r in takes.values()
-                                       if r["pid"] == s["pid"] and r["engine"] == engine)
+                                       if r["pid"] == s["pid"] and r["engine"] == eng)
                     f.write(json.dumps({"id": rid, "stage": "tts", "rule": "qa", "detail": detail}, ensure_ascii=False) + "\n")
 
 
@@ -496,12 +499,14 @@ def main(argv=None):
     ap.add_argument("--in", dest="inp", type=Path, required=True)
     ap.add_argument("--audio-dir", type=Path)
     ap.add_argument("--out", type=Path, required=True)
-    ap.add_argument("--engine", default="parler", choices=sorted(ENGINES))
+    ap.add_argument("--engine", default="omnivoice", help=f"one of {sorted(ENGINES)}, or several comma-separated")
     ap.add_argument("--max-takes", type=int, default=3)
     ap.add_argument("--corpus", default="w2-scripts-v1")
     ap.add_argument("--bench", action="store_true")
     ap.add_argument("--limit", type=int, default=0, help="first N scripts only (smoke runs)")
     a = ap.parse_args(argv)
+    if bad := set(a.engine.split(",")) - set(ENGINES):
+        ap.error(f"unknown engine(s) {sorted(bad)}")
     scripts = jsonl(a.inp)
     stage(scripts[: a.limit] if a.limit else scripts, a.out, a.engine, max_takes=a.max_takes, bench=a.bench, corpus=a.corpus)
 
