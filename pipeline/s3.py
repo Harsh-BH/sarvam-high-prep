@@ -3,18 +3,31 @@
 Every function takes an optional `s3` client so tests can pass `FakeS3` (test_s3.py).
 Credentials come from the environment: AWS_PROFILE=harsh-admin locally, the job role on SageMaker.
 """
+import os
 from pathlib import Path
 
 BUCKET = "sarvam-parta-114872709824"
 REGION = "ap-south-1"
+LOCAL_PROFILE = "harsh-admin"  # the `default` profile on this machine is a different AWS account
 _client = None
+
+
+def profile(env=os.environ, on_sagemaker=None):
+    """AWS profile to use: $AWS_PROFILE if set; none inside a SageMaker job (the job role); else harsh-admin."""
+    if on_sagemaker is None:
+        on_sagemaker = Path("/opt/ml/input/config").exists()
+    return env.get("AWS_PROFILE") or (None if on_sagemaker else LOCAL_PROFILE)
+
+
+def session():
+    import boto3
+    return boto3.Session(profile_name=profile(), region_name=REGION)
 
 
 def client():
     global _client
     if _client is None:
-        import boto3
-        _client = boto3.client("s3", region_name=REGION)
+        _client = session().client("s3")
     return _client
 
 

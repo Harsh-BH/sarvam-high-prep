@@ -58,8 +58,7 @@ def submit(stage, src, audio_src, params, *, run, instance, spot, sagemaker=None
     tar = subprocess.run(["git", "-C", str(ROOT), "archive", "--format=tar.gz", "HEAD"], capture_output=True, check=True).stdout
     store.put_once(f"code/{sha}.tar.gz", tar, s3)
     if sagemaker is None:
-        import boto3
-        sagemaker = boto3.client("sagemaker", region_name=store.REGION)
+        sagemaker = store.session().client("sagemaker")
     req = job_request(stage, src, audio_src, params, run=run, sha=sha, instance=instance, spot=spot)
     sagemaker.create_training_job(**req)
     print(f"submitted {req['TrainingJobName']}; logs: /aws/sagemaker/TrainingJobs/{req['TrainingJobName']}", file=sys.stderr)

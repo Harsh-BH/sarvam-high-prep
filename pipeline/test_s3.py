@@ -77,6 +77,10 @@ def main():
         raise AssertionError("plain put to archive/ must be refused")
     except ClientError:
         pass
+    # never fall back to the machine's `default` profile (a different AWS account)
+    assert s3.profile({}, on_sagemaker=False) == "harsh-admin"
+    assert s3.profile({}, on_sagemaker=True) is None
+    assert s3.profile({"AWS_PROFILE": "x"}, on_sagemaker=False) == "x"
     print("ok: fake")
     if "--live" in sys.argv:
         c = s3.client()
