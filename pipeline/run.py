@@ -92,6 +92,8 @@ def run_local(stage, spec, in_records, audio_prefix, params, *, run, cache=CACHE
         return 1
     if violations:
         return 2
+    # ponytail: one LATEST per stage, last writer wins; a pilot/experiment run moves it too. Point experiments at
+    # explicit stages/<stage>/<run> paths and restore LATEST after, or add per-dataset pointers if this bites.
     store.put(f"stages/{stage}/LATEST", run.encode(), s3)
     return 0
 
