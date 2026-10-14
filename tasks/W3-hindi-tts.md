@@ -463,7 +463,7 @@ First takes (500), final QA rules:
 | OmniVoice probe bench (final config) | g4dn.2xlarge | 942 | 1.035 | 0.27 |
 | **Total** | | 13,347 | | **$3.74 of $15** |
 
-- Eight other submissions waited for capacity and were stopped before an instance started, so nothing was billed. Spot g4dn.xlarge never got capacity in 3 h.
+- Seven other submissions waited for capacity and were stopped before an instance started, so nothing was billed. Spot g4dn.xlarge never got capacity in 3 h.
 - `data/master/credits.sh` on 2026-10-14: "usage $2.03, credits $-2.03, NET $-0.00 → credits covering everything" (Cost Explorer lags ≈ 24 h).
 - Sarvam: ₹0 this round. S3: ≈ 1.5 GB added (takes, kept audio, stage runs), well under $0.1/month.
 
@@ -485,7 +485,7 @@ First takes (500), final QA rules:
 - IndicF5 needs Harsh's "Agree" click on HF and an S3 mirror for jobs. Not needed now; OmniVoice is better on paper (SpeechArena puts IndicF5 last).
 
 **Handoffs:**
-- **W5:** align `stages/tts/20261014T163810Z-ddf6f86` (484 clips). Please report **filler durations**: 251 scripts have उम्म/हम्म and no ASR can verify them. Two filler clips are also on Harsh's list.
+- **W5:** align `stages/tts/20261014T163810Z-ddf6f86` (484 clips). Please report **filler durations**: 251 scripts carry W2's `filler` tag (उम्म/हम्म etc.) and no ASR can verify them. Two filler clips are also on Harsh's list.
 - **W6:** translate the same run. Each record carries `_w2` (the script minus `_gen`), so `entity_spans[].value`, `corrections` and `retracted` are there.
 - **W7:**
   - Synthetic audio rebuilds by copying `_archive.tts` = `archive/tts/<id>-<take key[:16]>.wav`, never by re-synthesising (6/6 sampled: archive = stage audio = sidecar sha256).
