@@ -70,6 +70,17 @@ jud = [{"en": ["number"], "alt": [], "errors": [err("ninety-seven")], "dropped":
 jud = tr.arbitrate(his, auto, jud)
 assert jud[0]["en"] == [] and jud[0]["overruled"] == 1 and jud[1]["en"] == ["number"] and jud[1]["overruled"] == 0
 
+# 2c. a segment-count failure is retried with an explicit count reminder (take 0 request unchanged)
+seen = []
+def split_llm(name, system, user, take, max_tokens):
+    seen.append(("Return exactly" in user, take))
+    segs = [{"en": "A."}, {"en": "B."}] if "Return exactly" in user else [{"en": "A."}, {"en": "B"}, {"en": "C."}]
+    return json.dumps({"segments": segs}), "k"
+tr.llm = split_llm
+segs, auto, keys, takes = tr.translate("mistral3", HI, {})
+assert [x["en"] for x in segs] == ["A.", "B."] and takes == 2 and seen == [(False, 0), (True, 1)], (seen, takes)
+tr.llm = fake_llm
+
 # 3. parse: wrong segment count is a hard failure
 try:
     tr.parse('{"segments": [{"en": "a"}]}', 2)

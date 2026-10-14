@@ -204,7 +204,9 @@ def translate(engine, his, gl, take0=0, user=None):
             keys.append("archive/api/it2/" + archive.request_key(it2_request(his)))
             segs = [{"en": " ".join(t.split()) or "."} for t in resp["segments"]]
         else:
-            text, k = llm(engine, TRANSLATE_SYS, user, take, 1500 + 150 * len(his))
+            u = user if not err or "segments for" not in err else \
+                user + f"\n\nReturn exactly {len(his)} objects in \"segments\", one per input segment, even for a long one."
+            text, k = llm(engine, TRANSLATE_SYS, u, take, 1500 + 150 * len(his))
             keys.append(k)
             try:
                 segs = parse(text, len(his))

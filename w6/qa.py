@@ -13,9 +13,9 @@ from collections import Counter
 nfc = lambda s: unicodedata.normalize("NFC", s)
 DEVA = re.compile(r"[ऀ-ॿ]")
 
-_HI = """शून्य ज़ीरो जीरो|एक|दो दौ|तीन|चार|पाँच पांच|छह छः छै छे छेह|सात|आठ|नौ|दस|ग्यारह|बारह|तेरह|चौदह|पंद्रह पन्द्रह|सोलह|सत्रह|अठारह|उन्नीस
+_HI = """शून्य ज़ीरो जीरो|एक|दो दौ|तीन|चार|पाँच पांच|छह छः छै छे छेह|सात|आठ|नौ|दस|ग्यारह|बारह बारा|तेरह|चौदह चौदा|पंद्रह पन्द्रह|सोलह|सत्रह|अठारह|उन्नीस उन्निस
 |बीस|इक्कीस|बाईस|तेईस|चौबीस|पच्चीस|छब्बीस|सत्ताईस|अट्ठाईस अठ्ठाईस अठाईस|उनतीस उन्तीस|तीस|इकतीस इकत्तीस|बत्तीस|तैंतीस|चौंतीस
-|पैंतीस|छत्तीस|सैंतीस|अड़तीस|उनतालीस उन्तालीस|चालीस|इकतालीस|बयालीस बियालीस|तैंतालीस|चवालीस चौवालीस|पैंतालीस|छियालीस|सैंतालीस|अड़तालीस
+|पैंतीस|छत्तीस|सैंतीस|अड़तीस|उनतालीस उन्तालीस|चालीस|इकतालीस|बयालीस बियालीस|तैंतालीस|चवालीस चौवालीस|पैंतालीस पैंतालिस|छियालीस|सैंतालीस|अड़तालीस
 |उनचास|पचास|इक्यावन|बावन|तिरपन तिरेपन|चौवन|पचपन|छप्पन|सत्तावन|अट्ठावन अठावन|उनसठ|साठ|इकसठ|बासठ|तिरसठ|चौंसठ|पैंसठ|छियासठ
 |सड़सठ सरसठ सढ़सठ|अड़सठ अढ़सठ|उनहत्तर|सत्तर|इकहत्तर|बहत्तर|तिहत्तर|चौहत्तर|पचहत्तर|छिहत्तर|सतहत्तर|अठहत्तर|उन्यासी उनासी|अस्सी|इक्यासी
 |बयासी बैयासी बियासी|तिरासी|चौरासी|पचासी|छियासी|सत्तासी|अट्ठासी अठासी|नवासी|नब्बे|इक्यानवे|बानवे|तिरानवे|चौरानवे|पचानवे|छियानवे|सत्तानवे
@@ -23,13 +23,16 @@ _HI = """शून्य ज़ीरो जीरो|एक|दो दौ|त�
 # English number words as spoken inside Hindi, written in Devanagari (SPEC R7)
 _HI_EN = {"वन": 1, "टू": 2, "थ्री": 3, "फ़ोर": 4, "फोर": 4, "फ़ाइव": 5, "फाइव": 5, "सिक्स": 6, "सेवन": 7, "एट": 8, "ऐट": 8,
           "नाइन": 9, "सेकंड": 2, "सेकेंड": 2, "टेन": 10, "इलेवन": 11, "ट्वेल्व": 12, "थर्टीन": 13, "फ़ोर्टीन": 14, "फोर्टीन": 14, "फ़िफ़्टीन": 15,
-          "फिफ्टीन": 15, "सिक्सटीन": 16, "सेवनटीन": 17, "सेवेनटीन": 17, "एटीन": 18, "नाइनटीन": 19, "ट्वेंटी": 20,
+          "फिफ्टीन": 15, "सिक्सटीन": 16, "सेवनटीन": 17, "सेवंटीन": 17, "सेवेनटीन": 17, "एटीन": 18, "नाइनटीन": 19, "ट्वेंटी": 20,
           "ट्वेन्टी": 20, "थर्टी": 30, "फ़ोर्टी": 40, "फोर्टी": 40, "फ़िफ़्टी": 50, "फिफ्टी": 50, "सिक्सटी": 60,
           "सेवेंटी": 70, "सेवनटी": 70, "एटी": 80, "नाइनटी": 90}
 HI_SMALL = {nfc(w): i for i, ws in enumerate(_HI.replace("\n", "").split("|")) for w in ws.split()}
 HI_SMALL.update({nfc(w): v for w, v in _HI_EN.items()})
 HI_SMALL.update({k[:-2] + "बे": v for k, v in list(HI_SMALL.items()) if k.endswith("नवे")})  # इक्यानबे …
+HI_NATIVE = set(HI_SMALL) - set(map(nfc, _HI_EN))  # native Hindi 21–99 are single words: बीस दो is two numbers
+HI_SMALL.update({nfc("उन्नीसो"): 1900, nfc("उन्निसो"): 1900})  # उन्नीसो निन्यानवे = 1999
 HI_MULT = {nfc(w): v for w, v in {"सौ": 100, "हंड्रेड": 100, "हज़ार": 1e3, "हजार": 1e3, "थाउज़ेंड": 1e3, "थाउजेंड": 1e3,
+                                  "थाऊजंड": 1e3, "थाउजंड": 1e3, "थाउज़ेन": 1e3, "थाउसेंड": 1e3,
                                   "लाख": 1e5, "करोड़": 1e7, "करोड": 1e7, "मिलियन": 1e6, "बिलियन": 1e9}.items()}
 HI_FRAC = {nfc(w): v for w, v in {"साढ़े": .5, "साढे": .5, "सवा": .25, "पौने": -.25}.items()}  # prefix: X+v
 HI_HALF = {nfc(w): v for w, v in {"डेढ़": 1.5, "डेढ": 1.5, "ढाई": 2.5}.items()}
@@ -60,8 +63,9 @@ SOFT = {"num_corr", "digits", "neg", "length", "loanword"}  # route to the judge
 
 class _Run:
     """Accumulates one run of number words into groups (arithmetic numbers)."""
-    def __init__(self):
+    def __init__(self, hindi=False):
         self.groups, self.total, self.cur, self.frac, self.rep, self.last = [], 0.0, None, 0.0, 1, None
+        self.hindi = hindi
 
     def _flush_num(self):
         if self.cur is not None or self.total:
@@ -104,7 +108,7 @@ class _Run:
         self._flush_num()
         g = self.groups
         self.groups = []
-        if len(g) == 2 and g[0] == g[1]:  # सात सात खिलाड़ी: "seven each"
+        if self.hindi and len(g) == 2 and g[0] == g[1]:  # सात सात खिलाड़ी: "seven each"
             g = g[:1]
         if len(g) >= 3 and all(float(x).is_integer() for x in g):  # a spoken digit string: compare as a string
             return ["".join(str(int(x)) for x in g)]
@@ -117,13 +121,18 @@ def _finish(run, out):
 
 def hi_numbers(hi):
     toks = nfc(hi).rstrip("।?! ").split()
-    out, run = [], _Run()
+    _Run_ = lambda: _Run(hindi=True)
+    out, run = [], _Run_()
     for i, t in enumerate(toks):
         nxt = toks[i + 1] if i + 1 < len(toks) else None
         if t == nfc("दो") and (nxt is None or (i and toks[i - 1] in _DO_VERB)):
-            _finish(run, out); run = _Run()
+            _finish(run, out); run = _Run_()
         elif t in HI_SMALL:
             run.small(HI_SMALL[t])
+            if t in HI_NATIVE:
+                run.last = "native"  # no English-style tens+unit join after it
+        elif t == nfc("सो") and run.cur is not None:  # L1 spelling of सौ after a number (तीन सो); alone it is "sleep"
+            run.mult(100)
         elif t in HI_HALF:
             run.small(0); run.cur, run.last = HI_HALF[t], "half"
         elif t in HI_MULT:
@@ -138,7 +147,7 @@ def hi_numbers(hi):
         elif t in HI_REP:
             run.rep = HI_REP[t]
         else:
-            _finish(run, out); run = _Run()
+            _finish(run, out); run = _Run_()
     _finish(run, out)
     return out
 
@@ -183,12 +192,14 @@ def en_numbers(en):
             _finish(run, out); run = _Run()
         i += 1
     _finish(run, out)
-    # spoken clock time: "seven thirty" -> 7.5 (Hindi says साढ़े सात)
+    # spoken clock time: "seven thirty" -> 7.5 (Hindi says साढ़े सात); spoken year: "nineteen forty-seven" -> 1947
     j, res = 0, []
     while j < len(out):
-        if j + 1 < len(out) and isinstance(out[j], float) and isinstance(out[j + 1], float) and 1 <= out[j] <= 12 \
-                and out[j + 1] in (15, 30, 45) and out[j].is_integer():
+        pair = j + 1 < len(out) and isinstance(out[j], float) and isinstance(out[j + 1], float) and out[j].is_integer()
+        if pair and 1 <= out[j] <= 12 and out[j + 1] in (15, 30, 45):
             res.append(out[j] + out[j + 1] / 60); j += 2
+        elif pair and 13 <= out[j] <= 20 and 10 <= out[j + 1] <= 99 and out[j + 1].is_integer():
+            res.append(out[j] * 100 + out[j + 1]); j += 2
         else:
             res.append(out[j]); j += 1
     return res
@@ -232,7 +243,7 @@ def check(hi, en, glosses=(), spoken=False):
         return {"empty": True}
     if DEVA.search(en):
         f["devanagari"] = DEVA.findall(en)[:5]
-    if re.search(r"\btranslat|\bin english\b|^\s*english\s*:", en, re.I):
+    if re.search(r"\btranslat(?:es|ed|ion) (?:to|as|of)\b|^\s*(?:english|hindi|translation)\s*:", en, re.I):
         f["meta"] = en[:60]
     h, e = Counter(map(_key, hi_numbers(hi))), Counter(map(_key, en_numbers(en)))
     missing, extra = sorted((h - e).elements(), key=str), sorted((e - h).elements(), key=str)
@@ -320,4 +331,8 @@ if __name__ == "__main__":
     assert e("one lakh one thousand") == [101000.0]
     assert neg_count(hi="पॉलिसी लैप्स न हो") == 1 and neg_count(hi="ठीक है न आप आइए") == 0 and neg_count(en="I don’t") == 1
     assert e("it's been an hour and a half") == [1.5] and n("लेकिन सेकंड दिन ही") == [2.0] and e("on the second day") == [2.0]
+    assert n("वर्ष दो हज़ार बीस दो हज़ार इक्कीस में") == [2020.0, 2021.0] and n("तीन सो रुपए") == [300.0]
+    assert e("in nineteen forty-seven") == [1947.0] and n("उन्नीस सौ सैंतालीस") == [1947.0] and n("उन्नीसो निन्यानवे") == [1999.0]
+    assert e("in twenty twenty") == [2020.0] and n("ट्वेंटी सिक्स थाऊजंड") == [26000.0]
+    assert "meta" not in check("इंटरव्यू इंग्लिश में होते हैं।", "Interviews are in English.") and "meta" in check("ख", "English: Book.")
     print("ok: qa")
