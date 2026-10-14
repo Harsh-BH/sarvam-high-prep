@@ -12,7 +12,16 @@ from pathlib import Path
 import s3 as store
 
 ROOT = Path(__file__).resolve().parent.parent
-CACHE = ROOT / "data/cache"
+
+
+def _main_checkout():
+    """The repo's main checkout (shared by every worktree), or ROOT when there's no git (a SageMaker job)."""
+    r = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--path-format=absolute", "--git-common-dir"], capture_output=True, text=True)
+    return Path(r.stdout.strip()).parent if r.returncode == 0 else ROOT
+
+
+CACHE = _main_checkout() / "data/cache"  # one cache for all worktrees, so a session never re-downloads what's here
+WHERE = "sagemaker" if Path("/opt/ml/input/config").exists() else "local"
 VALIDATE = ["uv", "run", str(ROOT / "validate.py")]
 STAGES = {
     "audio_qc": {"cmd": ["uv", "run", str(ROOT / "pipeline/audio_qc.py")], "makes_audio": False, "gpu": False},
@@ -87,7 +96,7 @@ def run_local(stage, spec, in_records, audio_prefix, params, *, run, cache=CACHE
         (out / "validate.txt").write_text(v.stdout + v.stderr)
     prefix = f"stages/{stage}/{run}"
     store.upload_dir(out, prefix, s3)
-    meta = {"stage": stage, "run": run, "input": in_records, "audio_from": audio_prefix, "params": params, "where": "local",
+    meta = {"stage": stage, "run": run, "input": in_records, "audio_from": audio_prefix, "params": params, "where": WHERE,
             "started": started, "finished": datetime.now(timezone.utc).isoformat(timespec="seconds"), "exit": rc,
             "violations": violations, "records": _count(out / "records.jsonl"), "rejects": _count(out / "rejects.jsonl")}
     store.put(f"{prefix}/run.json", json.dumps(meta, indent=1).encode(), s3)
