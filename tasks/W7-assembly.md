@@ -131,3 +131,17 @@ the checks.
 | What rebuild re-merges | `release.snapshot` freezes its input stage files under `release/<tag>/inputs/<n>.jsonl`; provenance names those keys + their origin runs | `stages/` is mutable and its noncurrent versions expire in 30 days; `release/` never expires. Removes the "local stage-file paths" ponytail, so a clean machine needs only the bucket |
 | Joining real + synthetic | `w7/assemble.py`: whole-record runs; an id in two runs is refused | `release.merge()` unions fields: passing `translate` (587) and `asr_check` (its subset) together would silently resurrect gate-dropped ids |
 | Clean-machine rebuild | `rebuild` registered as a stage (`w7/rebuild_stage.py`, one STAGES line), run with `--sm ml.m5.large` | `sm_entry` only runs STAGES; input ignored, report in `rebuild.json`, exit 1 on any diff |
+
+## Status — 2026-10-15: release/pilot-v2
+
+- `uv run w7/assemble.py pilot-v2 --runs stages/asr_check/20261014T115647Z-c478d29 stages/translate/20261014T112115Z-28cd27c stages/translate/20261014T175905Z-7250bf3` → **1,088 records, 6.581 h**, 0 violations on the full validator:
+
+  | Source | Records | Hours |
+  |---|---|---|
+  | Real, IndicVoices (gated) | 571 | 3.074 |
+  | Synthetic, OmniVoice (W3 round 2, W2 pilot scripts) | 467 | 3.328 |
+  | Synthetic, Bulbul v3 (round 1) | 33 | 0.123 |
+  | Synthetic, Magpie 357M (round 1) | 17 | 0.056 |
+
+- Synthetic ids are now bound to their kept take at release time (`assemble.bind_take`, write-once). Nine ids already bound by an abandoned W3 run to other audio were burned and left out: rec-400051, 400052, 400054, 400055, 400056, 400058, 400059, 400060, 400062.
+- **Clean-machine rebuild:** `stages/rebuild/20261014T182330Z-4c18ee7` on SageMaker ml.m5.large spot (119 s billed): **1,088/1,088 WAVs and the manifest byte-identical**, from the bucket alone.
