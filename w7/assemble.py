@@ -11,7 +11,7 @@ could bring back an id a later gate dropped. Real audio: the run's audio_from (t
 Synthetic audio: rebuild.source_audio(), the archived take through the pinned ffmpeg, so the release is by
 construction what rebuild makes on any machine. Then release.snapshot() writes release/<tag>/.
 """
-import argparse, json, sys
+import argparse, hashlib, json, sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -19,6 +19,24 @@ sys.path.insert(0, str(ROOT / "pipeline"))
 import rebuild, release, run, s3 as store  # noqa: E402
 
 WORK = run._main_checkout() / "data/w7/assemble"
+
+
+def bind_take(x, s3=None):
+    """Bind a released synthetic id to its kept take, write-once: archive/<source_file> is what rebuild reads.
+    -> True when archive/<source_file> holds this record's take (bound now if it was unbound); False when the id is
+    already bound to other audio (left by an abandoned run): that id is burned and the record leaves the release."""
+    key = f"archive/{x['source']['source_file']}"
+    tk = (x.get("_archive") or {}).get("tts")
+    take = store.get(tk, s3) if tk else None
+    bound = store.get(key, s3)
+    if bound is not None:
+        return take is None or bound == take  # no recorded take (round 1): the binding is the take
+    if take is None:
+        raise SystemExit(f"{x['id']}: synthetic, no {key} and no _archive.tts take")
+    meta = {"sha256": hashlib.sha256(take).hexdigest(), "take": tk, "bound_by": "w7/assemble.py"}
+    store.put_once(key, take, s3)
+    store.put_once(key + ".meta.json", json.dumps(meta, indent=1).encode(), s3)
+    return store.get(key, s3) == take  # a concurrent binder may have won with other bytes
 
 
 def assemble(tag, runs, *, partial, s3=None, work=WORK, cache=run.CACHE):
@@ -30,6 +48,11 @@ def assemble(tag, runs, *, partial, s3=None, work=WORK, cache=run.CACHE):
         f = d / f"{i}.jsonl"
         f.write_bytes(store.get(f"{r}/records.jsonl", s3))
         recs = [json.loads(l) for l in open(f, encoding="utf-8") if l.strip()]
+        burned = [x["id"] for x in recs if x["source"]["synthetic"] and not bind_take(x, s3)]
+        if burned:
+            print(f"{r}: {len(burned)} ids bound to other audio, burned and left out: {burned}", file=sys.stderr)
+            recs = [x for x in recs if x["id"] not in burned]
+            f.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in recs), encoding="utf-8")
         if dup := [x["id"] for x in recs if x["id"] in seen]:
             raise SystemExit(f"{r}: {len(dup)} ids also in {seen[dup[0]]}: {dup[:5]}")
         seen.update((x["id"], r) for x in recs)
