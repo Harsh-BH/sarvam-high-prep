@@ -360,9 +360,12 @@ Sources: HF cards and API metadata, GitHub, PyPI, read 2026-10-14 (S = the sourc
 | Bulbul v3 (round 1) | 72 | 0.26 | 0.016/0.048 | 96.6% | 95.3% | 98.9% | 4.2% | 0.0% | 18.1% | – | 0.091 | 0.28 (API) |
 | Magpie 357M (round 1) | 100 | 0.33 | 0.010/0.027 | 98.6% | 98.2% | 99.2% | 1.0% | 7.0% | 11.0% | – | 0.095 | 0.78 |
 | Indic Parler (round 1) | 100 | 0.34 | 0.020/0.077 | 94.1% | 92.7% | 97.1% | 7.0% | 5.0% | 40.0% | – | 0.095 | 1.29 |
+| **OmniVoice**, 31 cloned voices, own pace (final config; SageMaker T4) | 100 | 0.37 | **0.010/0.036** | **98.6%** | **98.6%** | **99.2%** | 2.0% | 0.0% | **11.0%** | 11.0% | 0.105 | 0.38 + 0.17 ASR |
 | **pocket-tts-hindi**, 40 cloned voices (laptop CPU) | 100 | 0.32 | 0.017/0.049 | 96.4% | 96.4% | 97.1% | 5.0% | 1.0% | **21.0%** | 22.0% | 0.089 | 0.31 (render only, CPU) |
 | pocket, sentence/comma chunks (rejected variant) | 100 | 0.39 | 0.017/0.052 | 97.2% | 95.9% | 97.7% | 8.0% | 0.0% | 19.0% | 21.0% | 0.111 | 0.27 |
 
+- **OmniVoice** ties Magpie's 11% (round 1's best), with the best number-entity, English-span and CER p90 of any engine except Magpie, and with Indian voices instead of 5 English ones. By phenomenon (rejects/n): digit strings 3/31, acronyms 3/16, lakh 2/17, fractions 2/16, dates 1/16, times 1/13, names 4/32, self-corrections 2/19, fillers 2/17.
+- Caveat: rows are judged by the QA of their day. Round 1 used the round-1 rules; pocket's run predates `qa.SAME` and the ऐ fold, which could only lower its rejects (the round-1 renders changed 2/382 verdicts).
 - **Pocket** is on a par with round-1 Bulbul and clearly better than Parler, with 40 Indian voices instead of 4–12. By phenomenon (rejects/n): digit strings 6/31, spelled acronyms 2/16 (Magpie: 37.5%), lakh 4/17, fractions 4/16, dates 1/16, times 2/13, self-corrections 5/19, fillers 3/17, **names 11/32: its weakest**.
 - **Chunking didn't help pocket.** Its own splitter only breaks at `. ! ?` and warns that a chunk over 50 tokens "may skip words"; with the punctuation stripped (card: trained without it), every script is one chunk. Rendering one sentence (long ones cut at commas) per call with 0.3 s gaps gave 19% vs 21% reject and 8 vs 5 agreed skips, i.e. no difference at n = 100, and a slower pace. Reverted; the simpler whole-text render stays.
 
@@ -431,3 +434,17 @@ First takes (500), final QA rules:
   - 2 have a repeated agreed substitution (तू→तो, कम्प्लेन→कंप्लेंट): ambiguous.
 - **QA equivalences found on this pilot** (both ASRs rewrite W2's spelling; INFERRED to be ASR spelling, not TTS errors): आइ→आई 38, है→हैं 12, भई→भाई 8, हैलो→हेलो, plus English ऐन/ऐड/ऐट → एन/एड/एट (folded in `qa.canon`). The re-judge recovered 15 scripts with them; 6 kept records switched to an earlier take.
 - **Cost:** the three pilot GPU runs took 9,932 s on g4dn.2xlarge ($1.035/h) = **$2.86**, plus $0.02 for the re-judge. **That is $0.84 per kept audio hour** including the abandoned attempts, or **$0.74** for the final run alone ($2.54 / 3.44 h). No API spend. Benches are in the spend log.
+
+## TTS-choice memo, round 2 (2026-10-14)
+
+1. **Primary engine: OmniVoice** (k2-fsa, weights CC BY-NC, NC), zero-shot cloning of IndicVoices speakers. Devanagari input; the engine's own pace; QA-gated with up to 4 takes.
+   - Measured: the best open engine here on the probe (11% QA reject, number-entity hit 98.6%) and on the W2 pilot (13% first-take reject, 96.8% kept, 99.4% number-entity hit).
+   - Voices are as many as there are good references; accent follows the reference (Indian, by construction).
+   - Fast: 0.37 s render per audio second on a T4.
+2. **Voice bank:** IndicVoices references at 8–14 chars/s (the pace filter is what made the clones natural *and* correct). 31 voices now (13 f, 18 m). For the bulk run, pull more female references from W1's next IndicVoices ingest: the filter currently finds only 13 women in 1,100 local files.
+3. **Second engine, optional: pocket-tts-hindi** (CC BY 4.0, 0.22 GB, CPU). 21% reject on the probe; worse on long W2 scripts (IndicConformer CER p50 0.074 vs 0.025 over 17 takes each). It's in the stage (`--engine omnivoice,pocket`: retakes rotate engines) for acoustic variety. Re-measure on W2 before giving it a share.
+4. **Not chosen:** Magpie (5 English-speaker voices), Indic Parler (40% reject, gated so no jobs), IndicF5 (gated, access not granted; last in SpeechArena), VoxCPM2 (never got GPU capacity; contradictory Hindi numbers), Chatterbox (torch pin; the Hindi finetune needs its Space's code), XTTS-v2 (older, NC like OmniVoice). Bulbul is out (no credits, not open).
+5. **Licence and consent:** the audio comes from an NC model and clones speakers who consented to IndicVoices, not to cloning. It's private and non-commercial only: never release it, and swap in consented voices before anything public.
+6. **Bulk run** (when W2's bulk scripts land):
+   - same command, `--engine omnivoice --max-takes 4`, g4dn.2xlarge;
+   - ≈ $0.74 per kept audio hour and ≈ 0.7 wall-hours per kept hour on one instance. 100 kept hours ≈ $75 and ≈ 70 h on one g4dn.2xlarge, well over this stream's $15 cap. A raise and sharding across instance types (each has quota 1) are needed: the stage has no `--shard i/n` yet (add it then).
