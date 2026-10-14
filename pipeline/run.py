@@ -19,6 +19,8 @@ STAGES = {
     "dedupe": {"cmd": ["uv", "run", str(ROOT / "pipeline/dedupe.py")], "makes_audio": False, "gpu": False},
     "transcribe": {"cmd": ["uv", "run", str(ROOT / "w4/convert.py")], "makes_audio": False, "gpu": False},
     "asr_check": {"cmd": ["uv", "run", str(ROOT / "w4/asr_check.py")], "makes_audio": False, "gpu": True},
+    "align": {"cmd": ["uv", "run", str(ROOT / "w5/align.py")], "makes_audio": False, "gpu": False},
+    "align_bench": {"cmd": ["uv", "run", str(ROOT / "w5/bench.py")], "makes_audio": False, "gpu": False},
 }
 
 
