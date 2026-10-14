@@ -50,6 +50,19 @@ def job_request(stage, src, audio_src, params, *, run, sha, instance, spot):
     return req
 
 
+def _create(sagemaker, req, *, wait=60, tries=60, sleep=time.sleep):
+    """create_training_job, waiting out the account's instance limits (e.g. at most 10 spot instances across all
+    training jobs): ResourceLimitExceeded is retried every `wait` s, up to `tries` times; anything else raises."""
+    for i in range(tries):
+        try:
+            return sagemaker.create_training_job(**req)
+        except Exception as e:
+            if store._code(e) != "ResourceLimitExceeded" or i == tries - 1:
+                raise
+            print(f"instance limit reached; retry {i + 1}/{tries - 1} in {wait} s", file=sys.stderr)
+            sleep(wait)
+
+
 def submit(stage, src, audio_src, params, *, run, instance, spot, sagemaker=None, s3=None):
     if _dirty():
         print("refusing: commit first, a job must map to one git sha", file=sys.stderr)
@@ -60,7 +73,7 @@ def submit(stage, src, audio_src, params, *, run, instance, spot, sagemaker=None
     if sagemaker is None:
         sagemaker = store.session().client("sagemaker")
     req = job_request(stage, src, audio_src, params, run=run, sha=sha, instance=instance, spot=spot)
-    sagemaker.create_training_job(**req)
+    _create(sagemaker, req)
     print(f"submitted {req['TrainingJobName']}; logs: /aws/sagemaker/TrainingJobs/{req['TrainingJobName']}", file=sys.stderr)
     while True:
         d = sagemaker.describe_training_job(TrainingJobName=req["TrainingJobName"])
