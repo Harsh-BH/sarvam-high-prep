@@ -46,7 +46,8 @@ def main():
         m3 = model()
         m3.load_state_dict(torch.load(ck / "decoder.pt")["model"], strict=True)
         m3.float()
-        loss3, _ = T.evaluate(m3, items, ctx)
+        loss3, _, per = T.evaluate(m3, items, ctx)
+        assert len(per) == len(s["dev_per_record"]) == len(items)
         assert abs(loss3 - s["dev_loss_merged"]) < 2e-2, (loss3, s)  # fp16-saved weights reproduce the trained model
         assert not any(".lora_" in k for k in torch.load(ck / "decoder.pt")["model"])
         print("ok", json.dumps(s))

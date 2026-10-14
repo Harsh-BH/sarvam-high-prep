@@ -61,18 +61,19 @@ def loss_sum(model, b, vocab_info, label_smoothing):
 
 
 def evaluate(model, items, ctx):
-    """-> (dev NLL per token without label smoothing, [per-record p_choose (L*H, T, S/2) fp16 on CPU])."""
+    """-> (dev NLL per token without label smoothing, [per-record p_choose (L*H, T, S/2) fp16 on CPU], [per-record (NLL sum, tokens)])."""
     import torch
     model.eval()
-    tot, n, pch = 0.0, 0, []
+    tot, n, pch, per = 0.0, 0, [], []
     with torch.no_grad(), ctx["amp"]():
         for it in items:  # one record per forward: p_choose has no padding to strip
             b = batch([it], ctx["tok_enc"], ctx["eos"], ctx["pad"], ctx["device"])
             l, k, p = loss_sum(model, b, ctx["vocab_info"], 0.0)
             tot, n = tot + float(l), n + k
             pch.append(p.half().cpu())
+            per.append((float(l), k))
     model.train()
-    return tot / n, pch
+    return tot / n, pch, per
 
 
 def lora_weights(model):
@@ -86,7 +87,7 @@ def train(model, train_items, dev_items, a, ckpt, ctx):
     ckpt.mkdir(parents=True, exist_ok=True)
     log = (ckpt / "log.jsonl").open("a")
     emit = lambda **kw: (log.write(json.dumps(kw) + "\n"), log.flush(), print(json.dumps(kw), flush=True))
-    base_loss, base_p = evaluate(model, dev_items, ctx)  # before any LoRA: the "before" number for the offline track
+    base_loss, base_p, base_per = evaluate(model, dev_items, ctx)  # before any LoRA: the "before" number for the offline track
     wrap_lora(model, LoRAConfig(r=a.rank, alpha=a.alpha, dropout_p=a.lora_dropout, keys=LORA_KEYS))
     freeze_non_lora(model)
     params = [p for p in model.parameters() if p.requires_grad]
@@ -120,7 +121,7 @@ def train(model, train_items, dev_items, a, ckpt, ctx):
         if step % 10 == 0:
             emit(step=step, train_loss=float(l) / k, lr=sched.get_last_lr()[0], grad_norm=float(gn), sec=round(time.time() - t0))
         if step % a.eval_every == 0 or step == a.steps:
-            dl, _ = evaluate(model, dev_items, ctx)
+            dl, _, _ = evaluate(model, dev_items, ctx)
             if dl < best:
                 best, bad = dl, 0
                 torch.save(lora_weights(model), ckpt / "best_lora.pt")
@@ -131,13 +132,14 @@ def train(model, train_items, dev_items, a, ckpt, ctx):
                         "best": best, "bad": bad, "rng": random.getstate()}, ckpt / "last.pt")
     assert not model.load_state_dict(torch.load(ckpt / "best_lora.pt"), strict=False).unexpected_keys
     unwrap_lora(model, merge=True)
-    tuned_loss, tuned_p = evaluate(model, dev_items, ctx)
+    tuned_loss, tuned_p, tuned_per = evaluate(model, dev_items, ctx)
     torch.save({"model": {k: v.half() for k, v in model.state_dict().items()}}, ckpt / "decoder.pt")
     cat = lambda ps: torch.cat([p.float().flatten() for p in ps])
     summary = {"steps": step, "stopped_early": bad >= a.patience, "dev_loss_base": base_loss, "dev_loss_best": best,
                "dev_loss_merged": tuned_loss, "p_choose_mean_base": float(cat(base_p).mean()),
                "p_choose_mean_tuned": float(cat(tuned_p).mean()), "p_choose_mean_abs_delta": float((cat(tuned_p) - cat(base_p)).abs().mean()),
-               "p_choose_ge_0.5_base": float((cat(base_p) >= 0.5).float().mean()), "p_choose_ge_0.5_tuned": float((cat(tuned_p) >= 0.5).float().mean())}
+               "p_choose_ge_0.5_base": float((cat(base_p) >= 0.5).float().mean()), "p_choose_ge_0.5_tuned": float((cat(tuned_p) >= 0.5).float().mean()),
+               "dev_per_record": [[b[0], t[0], b[1]] for b, t in zip(base_per, tuned_per)]}  # [base NLL sum, tuned NLL sum, tokens], dev.jsonl order
     emit(event="done", **summary)
     (ckpt / "done.json").write_text(json.dumps(summary, indent=1))
     return summary

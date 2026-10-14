@@ -108,7 +108,35 @@ The unity card's own offline text decoder is disabled in streaming (`use_text_de
 
 ## 3. Runs
 
-_Filled in below as runs happen: instance, steps, loss curves, spend._
+**Code:**
+- `w8d/submit.py`: builds the pairs, guards held-out ids/speakers/voices, uploads to `s3://…/w8d/<run>/`, and submits one job per GPU type. The first to start wins; the rest are stopped.
+- `w8d/train.py`: the in-job trainer. It writes `log.jsonl`, `last.pt`, `best_lora.pt`, `decoder.pt` and `done.json` to `w8d/<run>/ckpt/`.
+
+**Checks:**
+- `uv run w8d/test_submit.py`: the pair builder and the held-out guard.
+- `<venv>/bin/python w8d/test_train.py`: overfit on a tiny random decoder, spot-resume, and the merged-checkpoint round trip. It needs the fairseq2 env:
+  ```
+  uv venv -p 3.10 venv
+  uv pip install -p venv/bin/python --index-url https://download.pytorch.org/whl/cpu torch==2.2.0 torchaudio==2.2.0
+  uv pip install -p venv/bin/python --extra-index-url https://fair.pkg.atmeta.com/fairseq2/whl/pt2.2.0/cpu --index-strategy unsafe-best-match "fairseq2n==0.2.1+cpu" fairseq2==0.2.1 simuleval==1.1.4 soundfile overrides "numpy<2"
+  uv pip install -p venv/bin/python --no-deps <seamless_communication checkout>
+  ```
+  That is ~0.9 GB. Put it in tmpfs, not the laptop disk.
+
+| Run | Instance | Data | Hyperparameters | Result | Spend |
+|---|---|---|---|---|---|
+| `20261014T205030Z-4b7a960` | ml.g5.2xlarge on-demand, 886 s billed. g6e.xlarge, g6.2xlarge and g4dn.2xlarge were also submitted; they were still pending when g5 started and were stopped at $0 | train 1,010 records (6.09 h); dev = the 33 held-out-voice pilot-v2 ids (synthetic only; real dev references not yet ready) | LoRA r16, α32, dropout 0.05, 13.4 M trainable; batch 8, 800 steps (6.3 epochs), lr 1e-4, 50 warm-up then linear to 0; label smoothing 0.1; bf16 autocast | **Dev NLL 0.963 → 0.650** nats/token (best at step 750; still creeping down, no overfitting yet). Train loss (smoothed) 3.38 → 2.21. Teacher-forced p_choose: mean 0.447 → 0.488, share ≥ 0.5 0.401 → 0.445, mean \|Δ\| 0.048, so the policy should write earlier. Timing: encode 1,043 records 275 s; 800 steps 300 s | $0.45 ($1.82/h) |
+
+**Run 1 dev-curve:**
+
+| Step | 0 | 50 | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| Dev NLL | 0.963 | 0.866 | 0.796 | 0.723 | 0.693 | 0.673 | 0.660 | 0.653 | 0.652 | 0.650 |
+
+**Caveat on the offline number:**
+- The references are W6's Mistral-Large translations in the w6-style-v1 house style.
+- Part of the NLL drop is the decoder learning that style (punctuation, number formats, register), not better understanding of the Hindi.
+- COMET and the intent/entity proxies in the streaming eval are the better read on meaning.
 
 ## 4. Evaluation
 
