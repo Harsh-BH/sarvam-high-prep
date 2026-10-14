@@ -21,6 +21,7 @@ STAGES = {
     "asr_check": {"cmd": ["uv", "run", str(ROOT / "w4/asr_check.py")], "makes_audio": False, "gpu": True},
     "align": {"cmd": ["uv", "run", str(ROOT / "w5/align.py")], "makes_audio": False, "gpu": False},
     "align_bench": {"cmd": ["uv", "run", str(ROOT / "w5/bench.py")], "makes_audio": False, "gpu": False},
+    "translate": {"cmd": ["uv", "run", str(ROOT / "w6/translate.py")], "makes_audio": False, "gpu": False},
 }
 
 
@@ -94,6 +95,8 @@ def run_local(stage, spec, in_records, audio_prefix, params, *, run, cache=CACHE
         return 1
     if violations:
         return 2
+    # ponytail: one LATEST per stage, last writer wins; a pilot/experiment run moves it too. Point experiments at
+    # explicit stages/<stage>/<run> paths and restore LATEST after, or add per-dataset pointers if this bites.
     store.put(f"stages/{stage}/LATEST", run.encode(), s3)
     return 0
 

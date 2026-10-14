@@ -2,7 +2,7 @@
 
     flock data/.gpu.lock uv run --no-project --with torch --with transformers --with accelerate \
         python -I w4/asr_run.py MODEL [N] [SET]   # MODEL: whisper-v3 | whisper-turbo | mms | ic-ctc | ic-rnnt | vakyansh-w2v2
-    (ic-*: add --with onnxruntime)
+    (ic-*: add --with onnxruntime --with boto3; weights via w4/ic_weights.py)
 
 The `asr_check` pipeline stage (w4/asr_check.py) calls `hypotheses()` directly.
 
@@ -82,10 +82,10 @@ def indicconformer(name):
     # HF wrapper: ONNX encoder (CPU onnxruntime here; it asks for CUDA and falls back), TorchScript preprocessor.
     # The ".nemo" repo is the same multisoftmax model and needs the AI4Bharat NeMo fork, so it isn't used.
     import importlib.util
-    from huggingface_hub import snapshot_download
-    path = ROOT / "data/w4/ic600m"  # real files: onnxruntime rejects external data reached through cache symlinks
-    if not path.exists():
-        snapshot_download(HF[name], local_dir=path)
+    sys.path.insert(0, str(Path(__file__).resolve().parent))  # `python -I` leaves the script's folder off sys.path
+    import ic_weights  # local copy, else HF at the pinned revision (token), else the write-once S3 mirror (jobs)
+    path = ic_weights.LOCAL  # real files: onnxruntime rejects external data reached through cache symlinks
+    print("ic weights:", ic_weights.ensure(path), file=sys.stderr)
     spec = importlib.util.spec_from_file_location("model_onnx", f"{path}/model_onnx.py")  # = trust_remote_code
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
