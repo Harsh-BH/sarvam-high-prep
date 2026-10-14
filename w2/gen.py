@@ -50,6 +50,12 @@ CAP_INR = 15 * USD_INR + OVERCOUNT_INR  # W2's AWS cap ($15, SageMaker + Bedrock
 EST_OUT = 600  # output tokens charged per call before it runs
 CONFIG = {"maxTokens": 4096, "temperature": 0.8, "topP": 0.95}
 S_PER_CHAR = 0.099  # W3: median TTS seconds per non-space char (data/w3/renders.jsonl)
+STREAM = "w2"  # archive spend ledger; bulk() switches it
+# Off for the pilot (so pilot-v1 replays from the archive unchanged); bulk() sets them:
+AVOID = set()  # bank values never drawn
+AMOUNT_CAP = {}  # domain -> largest amount drawn
+MAX_CHARS = None  # longest hi_text (non-space chars) kept
+RESPELL = {}  # whole word -> spelling W3's ASRs agree on
 
 # --- coverage matrix v0 (targets; tasks/W2-scripts.md explains them) ---------------------------------------------
 DOMAIN_W = {"banking": 16, "upi": 14, "telecom": 11, "ecommerce": 13, "travel": 12, "health": 12, "gov": 10, "everyday": 12}
@@ -181,30 +187,45 @@ def dev(marked):
     return probe.transcript(probe.EN.sub(r"\1", marked))
 
 
+def ok(e, d):
+    """Bulk filters: no bank value W3's TTS kept failing on, no lakh-scale amount on a small purchase."""
+    return not (set(e.value.split()) & AVOID or e.type == "amount" and int(e.value) > AMOUNT_CAP.get(d, float("inf")))
+
+
+def draw(g, r, d, *a):
+    """g(r, *a) redrawn until ok(); with the filters off it is one call, so pilot-v1 cells keep their entities."""
+    for _ in range(10000):
+        if ok(e := g(r, *a), d):
+            return e
+    raise ValueError(f"{g.__name__}: nothing passes the bulk filters in {d}")
+
+
 def spec(cell, key):
     """Cell -> everything the prompt needs, with entities made by banks.py. Deterministic per key."""
     r = random.Random(key)
     d = cell["domain"]
-    prim = NUMFORMS[cell["numform"]](r, d)
+    prim = draw(NUMFORMS[cell["numform"]], r, d, d)
     ents = [(prim, None)]
     if cell["length"] != "short":
         others = {f: w for f, w in zip(FORMS, NUMFORM_W[d]) if f != cell["numform"] and w}
-        ents.append((NUMFORMS[r.choices(list(others), list(others.values()))[0]](r, d), None))
+        ents.append((draw(NUMFORMS[r.choices(list(others), list(others.values()))[0]], r, d, d), None))
     w = {"name": 3, "org": 3, "place": 1, "product": 2}
     for kind in sorted(w, key=lambda k: -r.random() ** (1 / w[k]))[:N_NAMED[cell["length"]]]:  # weighted, no repeats
         if kind == "name":
             own = r.random() < 0.5
-            ents.append((banks.g_name(r, cell["gender"] if own else None),
+            ents.append((draw(banks.g_name, r, d, cell["gender"] if own else None),
                          "the speaker's own name" if own else "a person the speaker mentions"))
         else:
-            ents.append(({"org": banks.g_org, "product": banks.g_product}[kind](r, d) if kind != "place" else banks.g_place(r), None))
+            ents.append((draw({"org": banks.g_org, "product": banks.g_product}[kind], r, d, d) if kind != "place"
+                         else draw(banks.g_place, r, d), None))
     corr = None
     if cell["corr"] == "entity":
         i = 0 if r.random() < 0.7 or len(ents) == 1 else r.randrange(1, len(ents))
         right = ents[i][0]
         for _ in range(50):
-            wrong = (NUMFORMS[cell["numform"]](r, d) if i == 0 else banks.g_name(r) if right.type == "name"
-                     else banks.g_place(r) if right.type == "place" else banks.g_org(r, d) if right.type == "org" else banks.g_product(r, d))
+            wrong = (draw(NUMFORMS[cell["numform"]], r, d, d) if i == 0 else draw(banks.g_name, r, d) if right.type == "name"
+                     else draw(banks.g_place, r, d) if right.type == "place" else draw(banks.g_org, r, d, d) if right.type == "org"
+                     else draw(banks.g_product, r, d, d))
             if dev(wrong.text) != dev(right.text) and wrong.type == right.type and near(wrong, right):
                 break
         corr = {"wrong": wrong, "right": right, "marker": cell["marker"]}
@@ -280,7 +301,7 @@ def llm(name, user, take, hist=()):
     req = {"model": model, "system": SYSTEM, "messages": msgs, "config": CONFIG, "take": take, "v": PROMPT_V}
     est_in = (len(SYSTEM) + sum(len(t) for _, t in msgs)) / 2  # Devanagari tokenises at ~2 chars/token or worse
     inr = (est_in * pin + EST_OUT * pout) / 1000 * USD_INR  # estimate charged against the cap before the call
-    resp, _ = archive.archive_call("bedrock", req, converse, stream="w2", inr=inr, cap_inr=CAP_INR)
+    resp, _ = archive.archive_call("bedrock", req, converse, stream=STREAM, inr=inr, cap_inr=CAP_INR)
     u = resp["usage"]
     return resp, archive.request_key(req), (u["inputTokens"] * pin + u["outputTokens"] * pout) / 1000
 
@@ -380,6 +401,8 @@ def check(sp, raw, pid):
     if not m:
         return None, ["format"]
     marked = nfc(" ".join(m.group(1).split()))
+    for a, b in RESPELL.items():
+        marked = re.sub(f"(?<![\u0900-\u097f]){a}(?![\u0900-\u097f])", b, marked)
     wrapped = []
     for e in [e for e, _ in sp["ents"]] + ([sp["corr"]["wrong"]] if sp["corr"] and "wrong" in sp["corr"] else []):
         if dev(e.text) not in [dev(x) for x, _ in TYPED.findall(marked)]:
@@ -429,7 +452,7 @@ def check(sp, raw, pid):
     if BANNED & set(bare.split()):  # outside English spans: ए is also the letter A ({ए टी एम|ATM})
         fails.append("filler")
     est = item["chars"] * S_PER_CHAR
-    if not 9 <= est <= 57:
+    if not 9 <= est <= 57 or MAX_CHARS and item["chars"] > MAX_CHARS:
         fails.append("length")
     item["detected"] = sorted(detect(item["sentences"]))
     if c["intent"] in DETECT and c["intent"] not in item["detected"]:
@@ -523,14 +546,36 @@ def write(path, recs):
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
 
+def bulk():
+    """Prompt v5 for the bulk run (tasks/S2-scale-synth.md), on top of v4: the pilot's three fixes and W3's handoff.
+    Rebinds module settings, so call it before generating; pilot-v1 never sees them."""
+    global PROMPT_V, STREAM, CAP_INR, MIX, LENGTH, AVOID, AMOUNT_CAP, MAX_CHARS, RESPELL, RULE
+    PROMPT_V, STREAM = "w2-v5", "scale-synth"
+    CAP_INR = 15 * USD_INR  # S2 Bedrock share of its $30 AWS cap, as archive estimates (~1.7x the real cost)
+    # fix 1: heavy first takes passed 12% because the English clause came out in Latin, outside the markup
+    MIX = {**MIX, "heavy": (20, "heavy: 9 or more English words, including at least one whole English phrase or clause of "
+                                "your own that fits the situation, written in Devanagari inside one {देवनागरी|latin} span "
+                                "like every other English word, never in Latin outside the braces")}
+    # fix 2: long scripts came out at ~93 words when 105-140 were asked; W3 lost scripts over ~400 chars past 60 s
+    LENGTH = {**LENGTH, "long": (20, (90, 110))}
+    MAX_CHARS = 400
+    RULE = {**RULE, "length": f"Too long: keep the monologue under {MAX_CHARS} Devanagari letters (about 100 words)."}
+    # fix 3: no lakh-scale amount on a small purchase (pilot: 26/500, e.g. ₹19.5 lakh for DTH)
+    AMOUNT_CAP = {"telecom": 99_999, "ecommerce": 300_000, "upi": 200_000, "travel": 500_000, "everyday": 1_000_000}
+    # W3 pilot takes: >= 2 entity misses and >= 25% of the takes that had them (Medanta 13/17, Lhakpa 12/16 ...)
+    AVOID = {"Medanta", "Lhakpa", "Fortis", "Uber", "Thyronorm", "David"}
+    RESPELL = {"आइ": "आई", "भई": "भाई"}  # both ASRs rewrote these on 38 and 8 pilot takes
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=["bake", "pilot"])
+    ap.add_argument("mode", choices=["bake", "pilot", "bulk"])
     ap.add_argument("--n", type=int)
     ap.add_argument("--models", default=",".join(MODELS))
     ap.add_argument("--model")
     ap.add_argument("--takes", type=int, default=5)
     ap.add_argument("--repairs", type=int, default=2)
+    ap.add_argument("--seed", default="bulk-v1", help="bulk: design seed")
     a = ap.parse_args()
     if a.mode == "bake":
         cells = design(a.n or 30, "bake-v1")
@@ -538,6 +583,14 @@ def main():
             recs = run(name, cells, "b-", "bake-v1", takes=1)
             write(DATA / f"bake/{name}-{PROMPT_V}.jsonl", recs)
             print(name, Counter(f for r in recs for f in r["fails"] or ["ok"]), file=sys.stderr)
+    elif a.mode == "bulk":  # never the pilot-v1 cells: own seed, own pids, own folder
+        bulk()
+        recs = run(a.model, design(a.n, a.seed), "w2b-", a.seed, takes=a.takes, repairs=a.repairs)
+        out = DATA.parent / "scale-synth" / a.seed
+        write(out / "scripts.jsonl", [r for r in recs if not r["fails"]])
+        write(out / "rejects.jsonl", [r for r in recs if r["fails"]])
+        print(f"{sum(not r['fails'] for r in recs)} kept, {sum(bool(r['fails']) for r in recs)} rejected; "
+              f"${sum(r['_gen']['usd'] for r in recs):.3f} -> {out}", file=sys.stderr)
     else:
         recs = run(a.model, design(a.n or 500, "pilot-v1"), "w2-", "pilot-v1", takes=a.takes, repairs=a.repairs)
         write(DATA / "scripts.jsonl", [r for r in recs if not r["fails"]])
@@ -580,4 +633,19 @@ if __name__ == "__main__":
     fem = {**atm, "cell": {**atm["cell"], "gender": "f"}}
     assert "gender" not in check(fem, "<script>मैं [ग्रेस डिसूज़ा|name] हूँ, नहीं।</script>", "t7")[1]
     assert "gender" in check(fem, "<script>मैं आ रहा हूँ, नहीं।</script>", "t8")[1]
+    if (DATA / "scripts.jsonl").exists():  # pilot-v1 cells and prompts are frozen: they must replay from the archive
+        pilot = [json.loads(l) for l in open(DATA / "scripts.jsonl", encoding="utf-8")]
+        cells = {f"w2-{i + 1:05d}": c for i, c in enumerate(design(500, "pilot-v1"))}
+        assert all(r["cell"] == cells[r["pid"]] and user_prompt(spec(r["cell"], f"pilot-v1:{r['pid']}")) == r["_gen"]["user"]
+                   for r in pilot), "pilot-v1 prompts changed"
+    if sys.argv[1:2] == ["bulk"]:
+        bulk()
+        for i, c in enumerate(design(1600, "bulk-v1")):
+            sp = spec(c, f"bulk-v1:w2b-{i + 1:05d}")
+            es = [e for e, _ in sp["ents"]] + ([sp["corr"]["wrong"]] if sp["corr"] and "wrong" in sp["corr"] else [])
+            assert all(ok(e, c["domain"]) for e in es), (c, es)
+        assert "inside one" in user_prompt(spec({**s["cell"], "mix": "heavy"}, "x"))
+        it, f = check(atm, "<script>{आइ मीन|I mean} भई, नहीं।</script>", "t9")
+        assert it["hi_text"] == "आई मीन भाई नहीं।" and "आइए" in check(atm, "<script>आइए, नहीं।</script>", "t10")[0]["hi_text"]
+        assert "length" in check(atm, "<script>" + "बहुत " * 110 + "नहीं।</script>", "t11")[1]
     main()
