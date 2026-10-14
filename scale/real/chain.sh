@@ -1,7 +1,7 @@
 #!/bin/bash
 # S1: one cut shard through the stages.   bash scale/real/chain.sh <tag> stages/cut/<run>
 #   audio_qc, dedupe, transcribe: local, light CPU. One shard's audio on disk at a time (LOCK; 1 GB laptop budget).
-#   align, asr_check: SageMaker ml.c5.2xlarge spot, at most SLOTS of S1's jobs at once (the spot quota is shared).
+#   align, asr_check: SageMaker ml.c5.2xlarge spot, at most SLOTS of S1's jobs at once (spot is capped at 10 instances account-wide).
 #   translate: local (the SageMaker role has no Bedrock access), last, so asr_check's drops cost no tokens.
 # Run ids are <time>-<sha>-<tag>, logged to data/scale-real/chains/<tag>.tsv as "<stage> <run> started|ok".
 # A rerun skips steps logged ok; a local step resumes into its logged run, a SageMaker step gets a new run.
@@ -10,7 +10,7 @@ cd "$(dirname "$0")/../.."
 tag=$1 prev=$2
 D=/home/harsh1/github-repos/sarvam-high-prep/data/scale-real
 CACHE=/home/harsh1/github-repos/sarvam-high-prep/data/cache
-LOG=$D/chains/$tag.tsv SLOTS=5
+LOG=$D/chains/$tag.tsv SLOTS=4  # the account allows 10 spot instances across ALL training jobs, shared
 mkdir -p "$D/chains"
 touch "$LOG"
 set -a; . /home/harsh1/github-repos/sarvam-high-prep/.env; set +a
