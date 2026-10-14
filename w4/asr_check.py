@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["torch", "transformers", "accelerate", "onnxruntime", "numpy", "huggingface_hub"]
+# dependencies = ["torch", "transformers", "accelerate", "onnxruntime", "numpy", "huggingface_hub", "boto3"]
 # ///
 """`asr_check` pipeline stage (design C7): ASR drafts, then the P1/P2 gate of w4/review_list.check().
 
@@ -11,8 +11,9 @@ Input: the `transcribe` stage's records. For every record not done yet, OUT_DIR/
 files are uploaded with the run, so the gate's input is archived and a re-run never re-decodes. Then each record goes
 to OUT_DIR/records.jsonl (+ `_qa.asr_check`) or OUT_DIR/rejects.jsonl (rule P0/P1/P2). Models load only for ids that
 lack a hypothesis, one at a time. GPU if present (Whisper, vakyansh); IndicConformer runs on CPU onnxruntime.
-Locally: `flock data/.gpu.lock uv run w4/asr_check.py ...`. ic-ctc is gated on HF: needs $HF_TOKEN, or its files
-already in data/w4/ic600m/.
+Locally: `flock data/.gpu.lock uv run w4/asr_check.py ...`. ic-ctc is gated on HF; its weights come from
+data/w4/ic600m/, else HF at the pinned revision if a token is available, else the write-once S3 mirror
+(w4/ic_weights.py) - the path a SageMaker job takes, since a job never gets an HF token.
 """
 import argparse, json, sys
 from pathlib import Path
