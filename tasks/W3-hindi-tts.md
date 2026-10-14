@@ -430,4 +430,4 @@ First takes (500), final QA rules:
   - 2 always ran past 60 s: w2-00119 (440 chars) and w2-00453 (430 chars) with slow voices. The 55 s cap triggers from the reference's pace, and OmniVoice's own estimate came out longer.
   - 2 have a repeated agreed substitution (तू→तो, कम्प्लेन→कंप्लेंट): ambiguous.
 - **QA equivalences found on this pilot** (both ASRs rewrite W2's spelling; INFERRED to be ASR spelling, not TTS errors): आइ→आई 38, है→हैं 12, भई→भाई 8, हैलो→हेलो, plus English ऐन/ऐड/ऐट → एन/एड/एट (folded in `qa.canon`). The re-judge recovered 15 scripts with them; 6 kept records switched to an earlier take.
-- **Cost:** 11,932 GPU-s on g4dn.2xlarge for the pilot runs ($1.035/h) = **$3.43**, plus the re-judge $0.02. **Per kept audio hour ≈ $1.0** (final run alone: $2.54 / 3.44 h = $0.74). No API spend.
+- **Cost:** the three pilot GPU runs took 9,932 s on g4dn.2xlarge ($1.035/h) = **$2.86**, plus $0.02 for the re-judge. **That is $0.84 per kept audio hour** including the abandoned attempts, or **$0.74** for the final run alone ($2.54 / 3.44 h). No API spend. Benches are in the spend log.
