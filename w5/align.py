@@ -191,6 +191,8 @@ def word_flags(words, ws, times, synthetic):
 def align(rec, lp, db, tokens, index):
     """-> (record with timings, raw dict, qa dict) or (None, reject dict)."""
     words = [w for ws in words_of(rec) for w in ws]
+    if missing := sorted({c for w in words for c in w} - index.keys()):  # SPEC allows chars the model lacks (e.g. ऍ)
+        return None, {"rule": "align_vocab", "detail": {"chars": missing}}
     res = viterbi(lp, words, index)
     if res is None:
         return None, {"rule": "align_infeasible", "detail": {"tokens": sum(map(len, words)) + len(words) - 1, "frames": lp.shape[0]}}
