@@ -8,7 +8,7 @@
     uv run w3/tts.py alloc SCRIPTS.jsonl          # record ids for new scripts -> w3/ids.tsv; commit before any run
     uv run w3/tts.py upload SCRIPTS.jsonl STAGE   # -> stages/STAGE/<run>/records.jsonl + LATEST, for run.py --in STAGE
     uv run w3/tts.py report SCRIPTS.jsonl DIR...  # bench tables (first takes) from DIR/takes.jsonl
-    uv run w3/tts.py listen RUN_DIR OUT_DIR       # the <= 10 min listening list for Harsh from a finished run
+    uv run w3/tts.py listen RUN_DIR OUT_DIR [N [S3_RUN]]  # the <= 10 min listening list for Harsh
 
 Input: W2 scripts (tasks/W2-scripts.md: pid, tts_dev, hi_text, sentences, entities, en_words, chars, gender).
 --audio-dir is unused: scripts have no audio. Per script: a voice of the script's gender (stable hash of pid, from
@@ -470,9 +470,10 @@ def report(scripts, dirs):
         f"{e}: " + ", ".join(f"{w} {n}" for (e2, w), n in sorted(why.items(), key=lambda x: -x[1]) if e2 == e) for e in engines))
 
 
-def listen(run, out, per_gender=6, fillers=4):
+def listen(run, out, per_gender=6, fillers=4, s3_run=None):
     """The one list for Harsh (<= 10 min): one clip per voice for `per_gender` voices of each gender (Indian accent?
-    gender right?), plus clips whose transcript has a filler (no ASR keeps fillers, W4). Shortest records first."""
+    gender right?), plus clips whose transcript has a filler (no ASR keeps fillers, W4). Shortest records first.
+    s3_run (stages/tts/<run>): fetch only the picked clips from there when RUN has no audio/ locally."""
     run, out = Path(run), Path(out)
     recs = sorted(jsonl(run / "records.jsonl"), key=lambda r: (r["duration"], r["id"]))
     pick, voices = [], {}
@@ -489,7 +490,9 @@ def listen(run, out, per_gender=6, fillers=4):
     with open(out / "listen.tsv", "w", encoding="utf-8") as f:
         f.write("n\tfile\tid\tvoice\tquestion\ttranscript\tanswer\n")
         for i, (r, q) in enumerate(pick, 1):
-            (out / "audio" / f"{i:02d}-{r['id']}.wav").write_bytes((run / r["audio"]).read_bytes())
+            src = run / r["audio"]
+            b = src.read_bytes() if src.exists() else store.get(f"{s3_run}/{r['audio']}")
+            (out / "audio" / f"{i:02d}-{r['id']}.wav").write_bytes(b)
             text = " ".join(s["hi_text"] for s in r["sentences"])
             f.write(f"{i}\taudio/{i:02d}-{r['id']}.wav\t{r['id']}\t{r['source']['voice']}\t{q}\t{text}\t\n")
     return len(pick), sum(r["duration"] for r, _ in pick) / 60
@@ -503,7 +506,8 @@ def main(argv=None):
     if argv and argv[0] == "report":
         return report(jsonl(argv[1]), argv[2:])
     if argv and argv[0] == "listen":
-        n, mins = listen(argv[1], argv[2])
+        n, mins = listen(argv[1], argv[2], per_gender=int(argv[3]) if len(argv) > 3 else 6,
+                         s3_run=argv[4] if len(argv) > 4 else None)
         print(f"{n} clips, {mins:.1f} min of audio -> {argv[2]}/listen.tsv")
         return
     if argv and argv[0] == "upload":
