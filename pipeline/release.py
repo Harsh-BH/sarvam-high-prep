@@ -7,7 +7,8 @@
     uv run pipeline/release.py <tag> --records A.jsonl [B.jsonl ...] --audio-dir DIR [--partial]
 
 Records are joined on `id` (later files override earlier fields), `_` keys dropped, validated,
-then written once to release/<tag>/: audio/<id>.wav, provenance.jsonl, manifest.jsonl (last).
+then written once to release/<tag>/: audio/<id>.wav, inputs/<n>.jsonl (the stage files, frozen: stages/ is
+mutable and release/ never expires), provenance.jsonl, manifest.jsonl (last).
 """
 import argparse, json, sys
 from pathlib import Path
@@ -57,7 +58,8 @@ def _gate(what, lines, audio_dir, partial):
         raise SystemExit(f"{what}: validate.py found {len(out)} violations; nothing released")
 
 
-def snapshot(tag, stage_files, audio_dir, *, partial, s3=None):
+def snapshot(tag, stage_files, audio_dir, *, partial, origins=None, s3=None):
+    """`origins`: where each stage file came from (an S3 run key), for the provenance; default its local path."""
     if store.exists(f"release/{tag}/manifest.jsonl", s3):
         raise SystemExit(f"release/{tag} exists; releases are frozen, pick a new tag")
     for p in stage_files:  # each file on its own: merge() and serialise() would hide duplicate ids and unknown keys
@@ -67,15 +69,17 @@ def snapshot(tag, stage_files, audio_dir, *, partial, s3=None):
         raise SystemExit(f"{len(missing)} records have no audio (text for ids outside the release?): {missing[:5]}")
     body = "".join(serialise(r) + "\n" for r in recs)
     _gate(f"release/{tag}", body.split("\n"), audio_dir, partial)
-    planned = {f"release/{tag}/{x}" for x in ["provenance.jsonl", "manifest.jsonl"] + [f"audio/{r['id']}.wav" for r in recs]}
+    inputs = [f"release/{tag}/inputs/{i}.jsonl" for i in range(len(stage_files))]
+    planned = {f"release/{tag}/{x}" for x in ["provenance.jsonl", "manifest.jsonl"] + [f"audio/{r['id']}.wav" for r in recs]} | set(inputs)
     if stale := sorted(set(store.keys(f"release/{tag}/", s3)) - planned):
         raise SystemExit(f"release/{tag} holds {len(stale)} objects this release wouldn't list: {stale[:5]}; pick a new tag")
     for r in recs:
         _once(f"release/{tag}/audio/{r['id']}.wav", (Path(audio_dir) / r["audio"]).read_bytes(), s3)
-    # ponytail: local stage-file paths until stages run through run.py (Task 10)
-    files = [str(Path(p).resolve()) for p in stage_files]
-    prov = "".join(json.dumps({"id": r["id"], "_rev": r.get("_rev"), "_archive": r.get("_archive"), "stage_files": files},
-                              ensure_ascii=False) + "\n" for r in recs)
+    for k, p in zip(inputs, stage_files):
+        _once(k, Path(p).read_bytes(), s3)
+    origins = origins or [str(Path(p).resolve()) for p in stage_files]
+    prov = "".join(json.dumps({"id": r["id"], "_rev": r.get("_rev"), "_archive": r.get("_archive"), "stage_files": inputs,
+                               "origins": origins}, ensure_ascii=False) + "\n" for r in recs)
     _once(f"release/{tag}/provenance.jsonl", prov.encode(), s3)
     _once(f"release/{tag}/manifest.jsonl", body.encode(), s3)  # last: its presence marks a complete release
     return len(recs)
