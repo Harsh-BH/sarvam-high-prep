@@ -417,9 +417,10 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
 
 
 def report(scripts, dirs):
-    """Markdown tables from takes.jsonl files (first takes only, so engines compare like round 1): by engine, by voice."""
+    """Markdown tables from takes.jsonl files (first takes only, so engines compare like round 1), one group per
+    run directory (named after the engine), then by voice."""
     ents = {x["pid"]: [qa.canon(e) for e in x["entities"]] for x in scripts}
-    rows = [r for d in dirs for r in jsonl(Path(d) / "takes.jsonl") if r["take"] == 1]
+    rows = [{**r, "engine": Path(d).name} for d in dirs for r in jsonl(Path(d) / "takes.jsonl") if r["take"] == 1]
 
     def pct(a, b):
         return f"{100 * a / b:.1f}%" if b else "–"
