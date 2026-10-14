@@ -40,7 +40,13 @@ MODELS = {  # name -> (Bedrock model id, USD per 1K input tokens, per 1K output;
     "deepseek-v3.2": ("deepseek.v3.2", 0.00074, 0.00222),
 }
 USD_INR = 88.0
-CAP_INR = 15 * USD_INR  # W2's AWS cap ($15, SageMaker + Bedrock together); W2 uses no SageMaker
+# ponytail: the first 1,434 archived w2 calls (to 2026-10-14 16:40) recorded an upper bound as `inr` (input + all 4,096
+# output tokens), ≈6x their real cost, and archive.spent() sums `inr`. Measured from the archived usage: recorded ₹1,326.70,
+# actual $2.5254 = ₹222.24. The cap is raised by that overcount so it still means $15 real; calls now record a realistic
+# estimate (p50 output was 255 tokens). Upgrade: archive_call recording the response's actual cost.
+OVERCOUNT_INR = 1326.70 - 222.24
+CAP_INR = 15 * USD_INR + OVERCOUNT_INR  # W2's AWS cap ($15, SageMaker + Bedrock together); W2 uses no SageMaker
+EST_OUT = 600  # output tokens charged per call before it runs
 CONFIG = {"maxTokens": 4096, "temperature": 0.8, "topP": 0.95}
 S_PER_CHAR = 0.099  # W3: median TTS seconds per non-space char (data/w3/renders.jsonl)
 
@@ -271,7 +277,7 @@ def llm(name, user, take):
     msgs = [x for q, a in SHOTS for x in (["user", q], ["assistant", a])] + [["user", user]]
     req = {"model": model, "system": SYSTEM, "messages": msgs, "config": CONFIG, "take": take, "v": PROMPT_V}
     est_in = (len(SYSTEM) + sum(len(t) for _, t in msgs)) / 2  # Devanagari tokenises at ~2 chars/token or worse
-    inr = (est_in * pin + CONFIG["maxTokens"] * pout) / 1000 * USD_INR  # upper bound, charged against the cap
+    inr = (est_in * pin + EST_OUT * pout) / 1000 * USD_INR  # estimate charged against the cap before the call
     resp, _ = archive.archive_call("bedrock", req, converse, stream="w2", inr=inr, cap_inr=CAP_INR)
     u = resp["usage"]
     return resp, archive.request_key(req), (u["inputTokens"] * pin + u["outputTokens"] * pout) / 1000
