@@ -1,0 +1,6 @@
+# Voice bank for w3/tts.py. engine '*' = a reference clip any cloning engine may use (ref = its S3 key, ref_text = what it says).
+voice	engine	gender	ref	ref_text	source	licence
+Rohit	parler	m				Apache-2.0 (model card speaker)
+Divya	parler	f				Apache-2.0 (model card speaker)
+Aman	parler	m				Apache-2.0 (model card speaker)
+Rani	parler	f				Apache-2.0 (model card speaker)

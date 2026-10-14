@@ -31,6 +31,8 @@ STAGES = {
     "align": {"cmd": ["uv", "run", str(ROOT / "w5/align.py")], "makes_audio": False, "gpu": False},
     "align_bench": {"cmd": ["uv", "run", str(ROOT / "w5/bench.py")], "makes_audio": False, "gpu": False},
     "translate": {"cmd": ["uv", "run", str(ROOT / "w6/translate.py")], "makes_audio": False, "gpu": False},
+    "tts": {"cmd": ["uv", "run", str(ROOT / "w3/tts.py")], "makes_audio": True, "gpu": True},
+    "tts_bench": {"cmd": ["uv", "run", str(ROOT / "w3/tts_bench.py")], "makes_audio": True, "gpu": True},
 }
 
 

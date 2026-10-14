@@ -22,7 +22,10 @@ from pathlib import Path
 
 import numpy as np
 
-ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "pipeline"))
+from run import _main_checkout  # noqa: E402
+
+ROOT = _main_checkout()  # data lives in the main checkout; worktrees have none
 DATA = ROOT / "data/w3"
 ASR_DIR = DATA / "asr"
 
@@ -189,18 +192,22 @@ def asr_w2v():
         return "".join(out)
 
     def run(path):
-        # Whole clips > ~10 s silently lose everything after some pause (measured: 4-23 % of renders per engine,
-        # CER 0.3-0.6 -> 0.01-0.08 when chunked). So decode <= 7 s chunks cut at the quietest 20 ms frame.
         x = load16k(path)
-        hop = 320
-        e = (x[: len(x) // hop * hop].reshape(-1, hop) ** 2).mean(1)
-        cuts = [0]
-        while len(x) - cuts[-1] > 7 * 16000:
-            a, b = (cuts[-1] + 4 * 16000) // hop, (cuts[-1] + 7 * 16000) // hop
-            cuts.append((a + int(np.argmin(e[a:b]))) * hop)
-        cuts.append(len(x))
-        return " ".join(decode(x[i:j]) for i, j in zip(cuts, cuts[1:]))
+        return " ".join(decode(x[i:j]) for i, j in quiet_chunks(x))
     return run
+
+
+def quiet_chunks(x, sr=16000):
+    """vakyansh on whole clips > ~10 s silently loses everything after some pause (measured: 4-23 % of renders per
+    engine, CER 0.3-0.6 -> 0.01-0.08 when chunked). So decode <= 7 s chunks cut at the quietest 20 ms frame."""
+    hop = sr // 50
+    e = (x[: len(x) // hop * hop].reshape(-1, hop) ** 2).mean(1)
+    cuts = [0]
+    while len(x) - cuts[-1] > 7 * sr:
+        a, b = (cuts[-1] + 4 * sr) // hop, (cuts[-1] + 7 * sr) // hop
+        cuts.append((a + int(np.argmin(e[a:b]))) * hop)
+    cuts.append(len(x))
+    return list(zip(cuts, cuts[1:]))
 
 
 def asr_ic():
@@ -243,34 +250,61 @@ def cmd_asr(name, index="renders"):
     print(name, len(todo), "->", out)
 
 
+def measure(r, hyps, wav):
+    """One render vs its ASR hypotheses {model: raw hyp} -> QA row (everything but the speed rule's spc_rel/why).
+    r needs hi_text, entities, en_words, chars."""
+    ref = canon(r["hi_text"])
+    h = {m: canon(x) for m, x in hyps.items()}
+    cers = {m: cer(ref, x) for m, x in h.items()}  # all ASRs, for the record
+    cov = {m: len(x.replace(" ", "")) / max(1, len(ref.replace(" ", ""))) for m, x in h.items()}
+    if max(cov.values()) >= 0.85:  # an ASR that stopped early is an ASR failure while another one heard it all
+        h = {m: x for m, x in h.items() if cov[m] >= 0.7}
+    a = audio_stats(wav)
+    ents = [canon(e) for e in r["entities"]]
+    miss = [e for e in ents if not any(ent_hit(e, x) for x in h.values())]  # missed only if every ASR misses it
+    en = [canon(e) for e in r["en_words"]]
+    en_miss = [e for e in en if not any(ent_hit(e, x) for x in h.values())]
+    skips, adds, subs = agreed(ref, list(h.values()))
+    return {**a, "cer": cers, "best_cer": min(cer(ref, x) for x in h.values()), "ent_n": len(ents), "ent_miss": miss,
+            "en_n": len(en), "en_miss": en_miss, "skips": skips, "adds": adds, "subs": subs, "asrs": sorted(h),
+            "spc": a["speech"] / max(1, r["chars"])}
+
+
+def rules(x, dur):
+    """QA row (with spc_rel, None = no speed reference yet) -> reasons to reject; [] = keep."""
+    why = []
+    if x["best_cer"] > CER_REJECT:
+        why.append(f"cer{x['best_cer']:.2f}")
+    if x["ent_miss"]:
+        why.append(f"ent{len(x['ent_miss'])}")
+    if x["en_miss"]:
+        why.append(f"en{len(x['en_miss'])}")
+    if len(x["subs"]) >= SUBS_REJECT:
+        why.append(f"subs{len(x['subs'])}")
+    if x["skips"]:
+        why.append("skip")
+    if x["adds"]:
+        why.append("add")
+    if x["spc_rel"] is not None and not SPC_LO <= x["spc_rel"] <= SPC_HI:
+        why.append(f"spc{x['spc_rel']:.2f}")
+    if x["pause"] > PAUSE_MAX:
+        why.append(f"pause{x['pause']:.1f}")
+    if max(x["lead"], x["trail"]) > EDGE_MAX:
+        why.append("edge")
+    if x["clip"] > CLIP_MAX:
+        why.append("clip")
+    if dur > 60:
+        why.append("over60")
+    return why
+
+
 def cmd_score(index="renders"):
     hyps = {}
     for p in sorted(ASR_DIR.glob("*.jsonl")):
         for l in open(p, encoding="utf-8"):
             d = json.loads(l)
-            hyps.setdefault(d["key"], {})[p.stem] = canon(d["hyp"])
-    rows = []
-    for r in renders(index):
-        h = hyps.get(r.get("asr_key", r["key"]), {})
-        if not h:
-            continue
-        ref = canon(r["hi_text"])
-        cov = {m: len(x.replace(" ", "")) / max(1, len(ref.replace(" ", ""))) for m, x in h.items()}
-        if max(cov.values()) >= 0.85:  # an ASR that stopped early is an ASR failure while another one heard it all
-            h = {m: x for m, x in h.items() if cov[m] >= 0.7}
-        a = audio_stats(ROOT / r["wav"])
-        cers = {m: cer(ref, x) for m, x in hyps[r.get("asr_key", r["key"])].items()}  # all ASRs, for the record
-        ents = [canon(e) for e in r["entities"]]
-        # entity missed only if every ASR misses it
-        miss = [e for e in ents if not any(ent_hit(e, x) for x in h.values())]
-        en = [canon(e) for e in r["en_words"]]
-        en_miss = [e for e in en if not any(ent_hit(e, x) for x in h.values())]
-        skips, adds, subs = agreed(ref, list(h.values()))
-        rows.append({**r, **a, "cer": cers, "best_cer": min(cers.values()), "ent_n": len(ents), "ent_miss": miss,
-                     "en_n": len(en), "en_miss": en_miss, "skips": skips, "adds": adds, "subs": subs,
-                     "asrs": sorted(h),
-                     "spc": a["speech"] / max(1, r["chars"])})
-        rows[-1]["best_cer"] = min(cer(ref, x) for x in h.values())
+            hyps.setdefault(d["key"], {})[p.stem] = d["hyp"]
+    rows = [{**r, **measure(r, hyps[k], ROOT / r["wav"])} for r in renders(index) if (k := r.get("asr_key", r["key"])) in hyps]
     # duration-per-char relative to the engine-voice median
     med = {}
     for x in rows:
@@ -283,31 +317,8 @@ def cmd_score(index="renders"):
         (DATA / "spc_median.json").write_text(json.dumps({"|".join(k): v for k, v in med.items()}))
     for x in rows:
         x["spc_rel"] = x["spc"] / med[(x["engine"], x["voice"])]
-        why = []
-        if x["best_cer"] > CER_REJECT:
-            why.append(f"cer{x['best_cer']:.2f}")
-        if x["ent_miss"]:
-            why.append(f"ent{len(x['ent_miss'])}")
-        if x["en_miss"]:
-            why.append(f"en{len(x['en_miss'])}")
-        if len(x["subs"]) >= SUBS_REJECT:
-            why.append(f"subs{len(x['subs'])}")
-        if x["skips"]:
-            why.append("skip")
-        if x["adds"]:
-            why.append("add")
-        if not SPC_LO <= x["spc_rel"] <= SPC_HI:
-            why.append(f"spc{x['spc_rel']:.2f}")
-        if x["pause"] > PAUSE_MAX:
-            why.append(f"pause{x['pause']:.1f}")
-        if max(x["lead"], x["trail"]) > EDGE_MAX:
-            why.append("edge")
-        if x["clip"] > CLIP_MAX:
-            why.append("clip")
-        if x["dur"] > 60:
-            why.append("over60")
-        x["why"] = why
-        x["verdict"] = "reject" if why else "keep"
+        x["why"] = rules(x, x["dur"])
+        x["verdict"] = "reject" if x["why"] else "keep"
     cols = ["key", "pid", "variant", "engine", "voice", "params", "dur", "chars", "spc", "spc_rel", "lead", "trail",
             "pause", "clip", "peak_db", "best_cer", "cer", "ent_n", "ent_miss", "en_n", "en_miss", "skips", "adds",
             "subs", "asrs", "verdict", "why"]
@@ -540,6 +551,8 @@ if __name__ == "__main__":
     assert agreed("और ब्रांच लुधियाना", ["और बांस लुधियाना"]) == ([], [], ["ब्रांच"])
     assert num_hit(canon("चौंसठ साल"), canon("चौसठ साल"))
     assert agreed(canon("पाँच छह चार"), [canon("पांच छः चार")]) == ([], [], [])
+    ch = quiet_chunks(np.r_[np.ones(80000), np.zeros(320), np.ones(160000)].astype(np.float32))
+    assert ch[0] == (0, 80000) and ch[-1][1] == 240320 and all(j - i <= 7 * 16000 for i, j in ch), ch
     a = sys.argv[1:]
     {"asr": lambda: cmd_asr(*a[1:]), "score": lambda: cmd_score(*a[1:]), "controls": cmd_controls,
      "report": lambda: cmd_report(*a[1:]), "summary": cmd_summary,
