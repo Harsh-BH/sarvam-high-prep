@@ -29,6 +29,9 @@ WIN, CTX = 400, 50  # frames kept per window, context frames on each side
 THREADS = 8  # fixed: float reduction order, hence the emissions, can depend on the thread count
 FINAL = "।?!"
 FILLERS = {"अ", "अं", "आ", "ए", "उम्म", "हम्म"}  # SPEC R9
+VAD_RISE, VAD_CAP = 10, 5  # fill_gaps: dB above the clip floor; frames (100 ms). Picked on the W5 control set
+UNSPOKEN_POST, FILLER_MIN, REGRET_MAX = 0.01, 0.06, 0.5  # QA (word_flags, verdict); see tasks/W5-alignment.md
+REJECT_FLAGS = {"unspoken", "filler_short"}
 
 
 def words_of(rec):
@@ -89,11 +92,11 @@ def viterbi(lp, words, index, sep="|"):
 
 
 def word_spans(spans, sep_id):
-    """Token spans -> per word (start_frame, end_frame_excl, mean char posterior)."""
+    """Token spans -> per word (start_frame, end_frame_excl, mean char posterior, max char posterior, n chars)."""
     out, cur = [], []
-    for s in spans + [(sep_id, 0, 0, 0.0)]:
+    for s in list(spans) + [(sep_id, 0, 0, 0.0)]:
         if s[0] == sep_id:
-            out.append((cur[0][1], cur[-1][2], sum(c[3] for c in cur) / len(cur)))
+            out.append((cur[0][1], cur[-1][2], sum(c[3] for c in cur) / len(cur), max(c[3] for c in cur), len(cur)))
             cur = []
         else:
             cur.append(s)
@@ -106,19 +109,19 @@ def frame_db(x):
     return 10 * torch.log10(x[torch.arange(n)[:, None] * HOP + torch.arange(RF)].pow(2).mean(1) + 1e-10)
 
 
-def fill_gaps(ws, db, rise, cap):
+def fill_gaps(ws, db, rise=VAD_RISE, cap=VAD_CAP):
     """CTC puts each character on one peaky frame, so a long vowel (phrase-final है, vowel-initial और, the filler अ)
     leaves the frames around it to blank. Hand the frames between two words back to them unless the audio is silent
-    there: extend the left word's end and pull the right word's start through non-silent frames, at most `cap` frames
-    each; a gap with no silent frame is split in the middle. Silent = below the clip's 10th-percentile level + `rise`
-    dB. Pauses stay outside every word (SPEC §3). ws: [(start_frame, end_frame_excl, ...)] -> [[start, end]]."""
+    there: a gap with no silent frame is split in the middle; otherwise the left word's end and the right word's
+    start move through non-silent frames up to the silence, at most `cap` frames each (also before the first and
+    after the last word). Silent = below the clip's 10th-percentile level + `rise` dB. Pauses stay outside every
+    word (SPEC §3). ws: [(start_frame, end_frame_excl, ...)] -> [[start, end]]."""
     speech = (db > torch.quantile(db, 0.1) + rise).tolist()
     out = [[w[0], w[1]] for w in ws]
     for i in range(len(out) + 1):
         lo, hi = out[i - 1][1] if i else 0, out[i][0] if i < len(out) else len(speech)
         if 0 < i < len(out) and all(speech[lo:hi]):
-            mid = (lo + hi) // 2
-            out[i - 1][1], out[i][0] = min(mid, lo + cap), max(mid, hi - cap)
+            out[i - 1][1] = out[i][0] = (lo + hi) // 2
             continue
         a, b = lo, hi
         while i and a < hi and speech[a] and a - lo < cap:
@@ -164,23 +167,43 @@ def set_times(rec, times):
         j += len(sw)
 
 
-def align(rec, lp, tokens, index):
-    """-> (record with timings, raw dict) or (None, reason)."""
-    sents = words_of(rec)
-    words = [w for ws in sents for w in ws]
+def word_flags(words, ws, times):
+    """QA flags per word: `unspoken` = a non-filler word whose every character has posterior < UNSPOKEN_POST and
+    that Viterbi squeezed to at most one spare frame (a transcript word the audio lacks); `filler_short` = a filler
+    shorter than FILLER_MIN s after gap filling. Fillers get no posterior test: the model never emits them."""
+    flags = []
+    for i, (w, (s, e, _, top, n), (t0, t1)) in enumerate(zip(words, ws, times)):
+        if w in FILLERS and t1 - t0 < FILLER_MIN:
+            flags.append([i, "filler_short"])
+        elif w not in FILLERS and top < UNSPOKEN_POST and e - s <= n + 1:
+            flags.append([i, "unspoken"])
+    return flags
+
+
+def align(rec, lp, db, tokens, index):
+    """-> (record with timings, raw dict, qa dict) or (None, reject dict)."""
+    words = [w for ws in words_of(rec) for w in ws]
     res = viterbi(lp, words, index)
     if res is None:
         return None, {"rule": "align_infeasible", "detail": {"tokens": sum(map(len, words)) + len(words) - 1, "frames": lp.shape[0]}}
     spans, forced = res
     ws = word_spans(spans, index["|"])
-    set_times(rec, [(s * FRAME, e * FRAME) for s, e, _ in ws])
+    filled = fill_gaps(ws, db)
+    set_times(rec, [(s * FRAME, e * FRAME) for s, e in filled])
+    times = [(x["start"], x["end"]) for x in rec["hi_words"]]
     best = lp.max(-1).values.sum().item()  # greedy path: forced == best iff the transcript is what the model hears
-    conf = [c for _, _, c in ws]
-    qa = {"regret": round((best - forced) / lp.shape[0], 4), "conf_mean": round(sum(conf) / len(conf), 4),
-          "conf_min": round(min(conf), 4)}
-    raw = {"model": MODEL, "rev": REV, "frame": FRAME, "frames": lp.shape[0], "greedy": greedy(lp, tokens),
-           "spans": [[tokens[t], s, e, round(c, 4)] for t, s, e, c in spans]}
+    qa = {"regret": round((best - forced) / lp.shape[0], 4), "flags": word_flags(words, ws, times)}
+    raw = {"model": MODEL, "rev": REV, "frame": FRAME, "frames": lp.shape[0], "fill": [VAD_RISE, VAD_CAP],
+           "greedy": greedy(lp, tokens), "spans": [[tokens[t], s, e, round(c, 4)] for t, s, e, c in spans],
+           "words": filled}
     return rec, raw, qa
+
+
+def verdict(qa):
+    """-> reject rule or None (design §3.3: drop, never review)."""
+    if qa["regret"] > REGRET_MAX:
+        return "align_regret"
+    return next((f for _, f in qa["flags"] if f in REJECT_FLAGS), None)
 
 
 def main():
@@ -201,13 +224,18 @@ def main():
     m = W2V()
     with open(a.out / "records.jsonl", "a", encoding="utf-8") as ok, open(a.out / "rejects.jsonl", "a", encoding="utf-8") as bad:
         for r in todo:
-            lp = m(load(a.audio_dir / r["audio"]))
-            res = align(r, lp, m.tokens, m.index)
+            x = load(a.audio_dir / r["audio"])
+            lp, db = m(x), frame_db(x)
+            assert len(db) == lp.shape[0]
+            res = align(r, lp, db, m.tokens, m.index)
             if res[0] is None:
                 bad.write(json.dumps({"id": r["id"], "stage": "align", **res[1]}, ensure_ascii=False) + "\n")
                 continue
             rec, raw, qa = res
             (a.out / "raw" / f"{r['id']}.json").write_text(json.dumps(raw, ensure_ascii=False))
+            if rule := verdict(qa):
+                bad.write(json.dumps({"id": r["id"], "stage": "align", "rule": rule, "detail": qa}, ensure_ascii=False) + "\n")
+                continue
             rec.setdefault("_qa", {})["align"] = qa
             rec.setdefault("_archive", {})["align"] = f"raw/{r['id']}.json"
             ok.write(json.dumps(rec, ensure_ascii=False) + "\n")

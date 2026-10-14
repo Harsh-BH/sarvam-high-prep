@@ -13,7 +13,7 @@ COND: clean | tel (8 kHz, 300 Hz high-pass, 8-bit mu-law) | noise (white, 10 dB 
 prepended: every time must move by exactly 0.37 s) | cut (one word's audio removed: the transcript word is unspoken)
 | dup (one word's audio repeated: speech the transcript lacks).
 """
-import json, random, re, sys, time, unicodedata, wave
+import functools, json, random, re, sys, time, unicodedata, wave
 from pathlib import Path
 
 import numpy as np
@@ -154,7 +154,7 @@ def w2v():
             return None
         spans, forced = res
         return {"frames": lp.shape[0], "regret": (lp.max(-1).values.sum().item() - forced) / lp.shape[0],
-                "words": [[s * A.FRAME, e * A.FRAME, c] for s, e, c in A.word_spans(spans, m.index["|"])],
+                "words": [[s * A.FRAME, e * A.FRAME, c] for s, e, c, *_ in A.word_spans(spans, m.index["|"])],
                 "spans": [[m.tokens[t], s, e, round(c, 4)] for t, s, e, c in spans]}
     return run
 
@@ -293,16 +293,18 @@ def perturb(x, cond, rec, clean=None):
         return x + torch.randn(len(x), generator=g) * (x.pow(2).mean() / 10).sqrt(), None
     if cond == "shift":
         return torch.cat([torch.zeros(round(SHIFT * 24000)), x]), None
-    ws = clean["words"]
+    # word spans of the clean run after align.fill_gaps, so a cut takes the whole word (a filler's CTC frame sits
+    # mid-vowel) and the pauses around it: cut = [end of word i-1, start of word i+1); dup repeats [start_i, end_i)
+    ws = A.fill_gaps(A.word_spans([tuple(s) for s in clean["spans"]], "|"), A.frame_db(AF.resample(x, 24000, A.SR)))
     words = [w for ws_ in A.words_of(rec) for w in ws_]
     cand = [i for i in range(1, len(words) - 1) if cond[-1] != "f" or words[i] in A.FILLERS]
     if not cand:
         return None, None
     i = cand[int(torch.randint(len(cand), (1,), generator=g))]
-    a, b = round(ws[i][0] * 24000), round(ws[i + 1][0] * 24000)
-    if cond.startswith("cut"):
-        return torch.cat([x[:a], x[b:]]), {"word": i, "w": words[i], "secs": (b - a) / 24000}
-    return torch.cat([x[:b], x[a:b], x[b:]]), {"word": i, "w": words[i], "secs": (b - a) / 24000}  # dup
+    sec = lambda f: round(f * A.FRAME * 24000)
+    a, b = (sec(ws[i - 1][1]), sec(ws[i + 1][0])) if cond.startswith("cut") else (sec(ws[i][0]), sec(ws[i][1]))
+    edit = {"word": i, "w": words[i], "secs": (b - a) / 24000}
+    return (torch.cat([x[:a], x[b:]]) if cond.startswith("cut") else torch.cat([x[:b], x[a:b], x[b:]])), edit
 
 
 def run(aligner, set_name, *conds):
@@ -335,22 +337,55 @@ def run(aligner, set_name, *conds):
 
 # ---------------------------------------------------------------- scoring
 
+@functools.cache
 def results(aligner, set_name, cond):
     p = W5 / "bench" / aligner / f"{set_name}.{cond}.jsonl"
     return {r["id"]: r for r in map(json.loads, open(p))} if p.exists() else {}
 
 
+TRIM_DB = 15  # control truth: a word edge inside VITS's token allocation but below the clip floor + 15 dB is pause
+
+
 def truth_intervals(rec, ctrl_by_id):
-    """-> per word ((start_lo, start_hi), (end_lo, end_hi)): the VITS char-token edge, widened by the blank token
-    next to it (an onset/offset may sit in either). Long clips rebuild it from their parts."""
+    """-> per word ((start_lo, start_hi), (end_lo, end_hi)) on the control set. VITS gives each character token a
+    duration; a word's truth is its first..last character token, widened by the blank token next to it (an onset or
+    offset may sit in either). VITS also hands pause frames to the token beside the pause (a phrase-final है "lasts"
+    300 ms into silence), so edge frames that are silent in the audio are trimmed off (SPEC §3: pauses belong to
+    no word). Long clips rebuild it from their parts."""
     parts = [ctrl_by_id[p] for p in rec["_w5"]["src"].split("+")] if rec["_w5"].get("long") else [rec]
     ivs, off = [], 0.0
     for r in parts:
-        eb = r["_w5"]["edge_blank"]
+        db, hop = fine_level(r)
+        loud = db > np.percentile(db, 10) + TRIM_DB
+        eb, tr = r["_w5"]["edge_blank"], []
         for k, (s, e) in enumerate(r["_w5"]["truth"]):
-            ivs.append(((s - eb[k][0] * 0.016 + off, s + off), (e + off, e + eb[k][1] * 0.016 + off)))
+            a, b = int(s / hop), max(int(s / hop) + 1, int(e / hop))
+            idx = np.flatnonzero(loud[a:b])
+            tr.append((s, e) if not len(idx) else (max(s, (a + idx[0]) * hop), min(e, (a + idx[-1] + 1) * hop)))
+        for k, ((s, e), (ts, te)) in enumerate(zip(r["_w5"]["truth"], tr)):
+            lo_s = s - eb[k][0] * 0.016 if ts == s else ts
+            hi_e = e + eb[k][1] * 0.016 if te == e else te
+            # fluent junction (no silent frame between the words): the boundary may sit anywhere in the gap
+            if k and loud[int(tr[k - 1][1] / hop):int(ts / hop)].all():
+                lo_s = min(lo_s, tr[k - 1][1])
+            if k + 1 < len(tr) and loud[int(te / hop):int(tr[k + 1][0] / hop)].all():
+                hi_e = max(hi_e, tr[k + 1][0])
+            ivs.append(((lo_s + off, ts + off), (te + off, hi_e + off)))
         off += r["duration"] + 0.4
     return ivs
+
+
+_FINE = {}
+
+
+def fine_level(rec):
+    """dB per 5 ms hop (10 ms window) of a control clip, for trimming its truth."""
+    if rec["id"] not in _FINE:
+        x = read24(W5 / "ctrl" / rec["audio"]).numpy()
+        n = (len(x) - 240) // 120 + 1
+        fr = x[np.arange(n)[:, None] * 120 + np.arange(240)]
+        _FINE[rec["id"]] = (10 * np.log10((fr ** 2).mean(1) + 1e-10), 0.005)
+    return _FINE[rec["id"]]
 
 
 def err(x, lo, hi):
@@ -388,16 +423,17 @@ def ctrl_errors(aligner, cond, timing=None):
 _DB = {}
 
 
-def level(set_name, rec, cond, clean=None):
+def level(set_name, rec, cond):
     """Frame levels (align.frame_db) of the audio the aligner saw under `cond`."""
     k = (set_name, rec["id"], cond)
     if k not in _DB:
+        clean = results("w2v", set_name, "clean").get(rec["id"]) if cond.startswith(("cut", "dup")) else None
         x, _ = perturb(read24(SETS[set_name][1] / rec["audio"]), cond, rec, clean)
         _DB[k] = A.frame_db(AF.resample(x, 24000, A.SR))
     return _DB[k]
 
 
-def filled(rise, cap, set_name="ctrl"):
+def filled(rise=A.VAD_RISE, cap=A.VAD_CAP, set_name="ctrl"):
     """Timing variant: align.fill_gaps over the stored token spans."""
     def t(x, rec, cond):
         ws = A.word_spans([tuple(s) for s in x["spans"]], "|")
