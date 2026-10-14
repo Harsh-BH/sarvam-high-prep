@@ -1,8 +1,9 @@
 # sarvam-high-prep
 
-IIT Kharagpur team repo for Inter IIT Tech Meet 15.0, Sarvam high-prep PS: streaming Hindi (code-mixed) → English speech-to-speech translation.
-- Part A: build a ≤200 h dataset by the mid-term.
-- Part B: fine-tune Sarvam's base checkpoint and serve it over WebSocket.
+Personal learning project (solo) that uses the Inter IIT Tech Meet 15.0 Sarvam high-prep PS as its spec: streaming Hindi (code-mixed) → English speech-to-speech translation. Nothing is submitted.
+- Part A: build a ≤200 h dataset.
+- Part B: fine-tune an open streaming S2S model on it and serve it over WebSocket.
+- PS rules are engineering targets, not compliance. Competition-only rules (submission, mid-term freeze, §9.2 file list, organiser questions, Bulbul-only targets) don't apply. Prefer open-source models and low cost.
 
 ## Stack
 
