@@ -40,15 +40,17 @@ EDGE_MAX = 1.0        # leading or trailing silence (s)
 CLIP_MAX = 1e-4       # fraction of samples at full scale
 FILLERS = {"अ", "अं", "आ", "ए", "उम्म", "हम्म"}
 # Colloquial or spelling variants that both ASRs rewrite to the standard form (measured: the agreed substitutions in the
-# round-2 takes were ये->यह 5, पे->पर 5, मे->में 4, न->ना, ऐप->एप; a TTS reading the script would not swap them).
+# round-2 takes were ये->यह 5, पे->पर 5, मे->में 4, न->ना, हैलो->हेलो, and ऐ-initial English words, folded in canon;
+# a TTS reading the script would not swap them).
 # Not a substitution, like same-value number spellings.
-SAME = {frozenset(p) for p in (("ये", "यह"), ("पे", "पर"), ("मे", "में"), ("न", "ना"), ("वो", "वह"), ("ऐप", "एप"))}  # SPEC R9; ASRs drop them (W4: 0% kept), so a missing filler is unverifiable
+SAME = {frozenset(p) for p in (("ये", "यह"), ("पे", "पर"), ("मे", "में"), ("न", "ना"), ("वो", "वह"), ("हैलो", "हेलो"))}  # SPEC R9; ASRs drop them (W4: 0% kept), so a missing filler is unverifiable
 
 
 def canon(t):
     """Spelling variants the ear can't separate (nukta, candrabindu/anusvara, final marks) -> one form."""
     t = unicodedata.normalize("NFC", t)
     t = t.replace("\u093c", "").replace("\u0901", "\u0902").replace("\u0903", "")  # nukta, candrabindu, visarga
+    t = t.replace("\u0910", "\u090f")  # independent ऐ -> ए: both ASRs write एन/एड/एट for English an/add/at
     return " ".join(re.sub(r"[^\u0900-\u0963\u0971-\u097f ]", " ", t).split())
 
 
@@ -557,6 +559,7 @@ if __name__ == "__main__":
     assert num_hit(canon("चौंसठ साल"), canon("चौसठ साल"))
     assert agreed(canon("पाँच छह चार"), [canon("पांच छः चार")]) == ([], [], [])
     assert agreed(canon("मेरे नाम पे चेक"), [canon("मेरे नाम पर चेक")]) == ([], [], [])
+    assert agreed(canon("हैलो इट वाज़ ऐन ऐड"), [canon("हेलो इट वाज एन एड")]) == ([], [], [])
     ch = quiet_chunks(np.r_[np.ones(80000), np.zeros(320), np.ones(160000)].astype(np.float32))
     assert ch[0] == (0, 80000) and ch[-1][1] == 240320 and all(j - i <= 7 * 16000 for i, j in ch), ch
     a = sys.argv[1:]
