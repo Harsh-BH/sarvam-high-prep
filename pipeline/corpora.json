@@ -1,0 +1,98 @@
+{
+  "indicvoices": {
+    "name": "IndicVoices (AI4Bharat), Hindi long-form release",
+    "licence": "CC BY 4.0",
+    "licence_url": "https://huggingface.co/datasets/ai4bharat/IndicVoices",
+    "attribution": "Javed T. et al., \"IndicVoices: Towards building an Inclusive Multilingual Speech Dataset for Indian Languages\", ACL Findings 2024 (arXiv 2403.01926). AI4Bharat, funded by Bhashini, MeitY and Nilekani Philanthropies. CC BY 4.0, https://creativecommons.org/licenses/by/4.0/.",
+    "status": "OK",
+    "why": "HF card: license cc-by-4.0, click-through gate with no extra terms. INFERRED: the dmu_release long-form archives carry the same licence (they have no licence file; W1 open question 1)."
+  },
+  "spring-inx": {
+    "name": "SPRING-INX Hindi (SPRING Lab, IIT Madras)",
+    "licence": "CC BY 4.0",
+    "licence_url": null,
+    "attribution": "Nithya R. et al., \"SPRING-INX: A Multilingual Indian Language Speech Corpus by SPRING Lab, IIT Madras\" (arXiv 2310.14654). Funded by MeitY. CC BY 4.0.",
+    "status": "OK",
+    "why": "\"released under CCBY 4.0 license\", read from the asr.iitm.ac.in JS bundle (the page is a SPA, no stable licence URL); CC BY 4.0 on AIKosh for other languages (W1)."
+  },
+  "vaani": {
+    "name": "Vaani (ARTPARK / IISc), Hindi",
+    "licence": "CC BY 4.0",
+    "licence_url": "https://huggingface.co/datasets/ARTPARK-IISc/Vaani-transcription-part",
+    "attribution": null,
+    "status": "OK",
+    "why": "CC BY 4.0 HF tag on Vaani and Vaani-transcription-part (gated auto + form). Attribution text not yet written (W1)."
+  },
+  "mucs-slr103": {
+    "name": "MUCS 2021 Hindi (OpenSLR SLR103)",
+    "licence": "MS O-UDA",
+    "licence_url": null,
+    "attribution": null,
+    "status": "OK",
+    "why": "Licence UNVERIFIED: OpenSLR links only msropendata-web-api.azurewebsites.net/licenses/f1f352a6…, which no longer resolves (2026-10-14); MS O-UDA per the W1 task file. W1 verdict: reject on content (read, short)."
+  },
+  "rural-women": {
+    "name": "Rural Women ASR v2 (AI4Bharat)",
+    "licence": "CC BY 4.0",
+    "licence_url": "https://huggingface.co/datasets/ai4bharat/Rural_Women_ASR_v2",
+    "attribution": null,
+    "status": "HOLD",
+    "why": "CC BY 4.0 in the README Licensing section (no metadata tag); consent statement UNVERIFIED."
+  },
+  "kathbath": {
+    "name": "Kathbath (AI4Bharat), Hindi",
+    "licence": "CC BY 4.0 (HF) vs CC BY-SA 4.0 (AIKosh)",
+    "licence_url": "https://aikosh.indiaai.gov.in/home/datasets/details/hindi_asr_benchmark_dataset_kathbath_hindi_test_known.html",
+    "attribution": null,
+    "status": "HOLD",
+    "why": "Licence conflict between mirrors; take the stricter (SA) until resolved (research/datasets.md finding 4)."
+  },
+  "lahaja": {
+    "name": "Lahaja (AI4Bharat)",
+    "licence": "CC BY 4.0 (card text); HF metadata tag MIT",
+    "licence_url": "https://huggingface.co/datasets/ai4bharat/Lahaja",
+    "attribution": null,
+    "status": "EVAL",
+    "why": "A benchmark: kept out of Part A as W8c's accent-diverse eval set."
+  },
+  "fleurs": {
+    "name": "FLEURS hi_in (Google)",
+    "licence": "CC BY 4.0",
+    "licence_url": "https://huggingface.co/datasets/google/fleurs",
+    "attribution": null,
+    "status": "EVAL",
+    "why": "Read single-utterance files; the only open Hi→En S2ST eval set."
+  },
+  "indicvoices-r": {
+    "name": "IndicVoices-R (AI4Bharat)",
+    "licence": "CC BY 4.0",
+    "licence_url": "https://huggingface.co/datasets/ai4bharat/indicvoices_r",
+    "attribution": null,
+    "status": "TRAP",
+    "why": "Same speech as IndicVoices, enhanced into new files: cutting from both would double-count hours (§3A union is per source file)."
+  },
+  "gram-vaani": {
+    "name": "Gram Vaani (OpenSLR SLR118)",
+    "licence": "academic use only (OpenSLR); CC BY-NC 4.0 (AIKosh)",
+    "licence_url": "https://www.openslr.org/118/",
+    "attribution": null,
+    "status": "TRAP",
+    "why": "\"used freely for academic purposes, but permission for any commercial use… contact@gramvaani.org\": the recipient is a company (§10 R1)."
+  },
+  "shrutilipi": {
+    "name": "Shrutilipi (AI4Bharat)",
+    "licence": "CC BY 4.0 (card); AIR audio needs NSD prior written permission",
+    "licence_url": "https://www.newsonair.gov.in/copyright-policy",
+    "attribution": null,
+    "status": "TRAP",
+    "why": "All India Radio news audio; newsonair's copyright policy requires prior written permission beyond personal non-commercial use."
+  },
+  "yodas": {
+    "name": "YODAS / YODAS2 hi000 (ESPnet)",
+    "licence": "CC BY 3.0 (YouTube CC-BY uploads)",
+    "licence_url": "https://huggingface.co/datasets/espnet/yodas",
+    "attribution": null,
+    "status": "TRAP",
+    "why": "Only the uploader granted the licence, not the speakers: fails consent compliance (§3A); captions unreliable."
+  }
+}
