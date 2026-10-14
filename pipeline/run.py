@@ -19,6 +19,7 @@ STAGES = {
     "dedupe": {"cmd": ["uv", "run", str(ROOT / "pipeline/dedupe.py")], "makes_audio": False, "gpu": False},
     "transcribe": {"cmd": ["uv", "run", str(ROOT / "w4/convert.py")], "makes_audio": False, "gpu": False},
     "asr_check": {"cmd": ["uv", "run", str(ROOT / "w4/asr_check.py")], "makes_audio": False, "gpu": True},
+    "translate": {"cmd": ["uv", "run", str(ROOT / "w6/translate.py")], "makes_audio": False, "gpu": False},
 }
 
 
