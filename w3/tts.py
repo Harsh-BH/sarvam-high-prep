@@ -295,7 +295,7 @@ def spc_ref(rows, voice, engine, n=8):
 
 
 def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-v1", s3=None, synth=None, asr=None,
-          load16k=None, ids=None, bank=None, spool=archive.SPOOL):
+          load16k=None, ids=None, bank=None, spool=archive.SPOOL, archive_only=False):
     out = Path(out)
     (out / "audio").mkdir(parents=True, exist_ok=True)
     (out / "asr").mkdir(exist_ok=True)
@@ -334,12 +334,19 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
         return
     hyps = {m.stem: {r["key"]: r["hyp"] for r in jsonl(m)} for m in (out / "asr").glob("*.jsonl")}
     synths = {}
-    if asr is None:
-        asr, load16k = load_asr()
-    for m in asr:
+    names = list(asr) if asr else ["w2v", "ic"]
+    for m in names:
         hyps.setdefault(m, {})
+    ears = {"asr": asr, "load16k": load16k}  # the ASR models load only when a hypothesis is missing
+
+    def hear(m, path):
+        if ears["asr"] is None:
+            ears["asr"], ears["load16k"] = load_asr()
+        return ears["asr"][m](ears["load16k"](path))
 
     def call(req):
+        if archive_only:
+            raise SystemExit(f"--archive-only: take {archive.request_key(req)} is not archived")
         t = time.time()
         if req["engine"] not in synths:
             synths[req["engine"]] = synth or ENGINES[req["engine"]]["load"]()
@@ -367,12 +374,12 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
                 t_asr = time.time()
                 with tempfile.NamedTemporaryFile(suffix=".wav") as f:
                     f.write(b), f.flush()
-                    for m, fn in asr.items():
+                    for m in names:
                         if key not in hyps[m]:
-                            hyps[m][key] = fn(load16k(f.name))
+                            hyps[m][key] = hear(m, f.name)
                             with open(out / "asr" / f"{m}.jsonl", "a", encoding="utf-8") as h:
                                 h.write(json.dumps({"key": key, "hyp": hyps[m][key]}, ensure_ascii=False) + "\n")
-                    q = qa.measure(s, {m: hyps[m][key] for m in asr}, f.name)
+                    q = qa.measure(s, {m: hyps[m][key] for m in names}, f.name)
                 q["spc_rel"] = None if (ref := spc_ref(list(takes.values()), v["voice"], eng)) is None else q["spc"] / ref
                 dur = seconds(b)[0]
                 why = qa.rules(q, dur) + ([NO_SUBS] if len(q["subs"]) == 1 else [])
@@ -511,11 +518,13 @@ def main(argv=None):
     ap.add_argument("--corpus", default="w2-scripts-v1")
     ap.add_argument("--bench", action="store_true")
     ap.add_argument("--limit", type=int, default=0, help="first N scripts only (smoke runs)")
+    ap.add_argument("--archive-only", action="store_true", help="re-judge archived takes; fail if one would be rendered")
     a = ap.parse_args(argv)
     if bad := set(a.engine.split(",")) - set(ENGINES):
         ap.error(f"unknown engine(s) {sorted(bad)}")
     scripts = jsonl(a.inp)
-    stage(scripts[: a.limit] if a.limit else scripts, a.out, a.engine, max_takes=a.max_takes, bench=a.bench, corpus=a.corpus)
+    stage(scripts[: a.limit] if a.limit else scripts, a.out, a.engine, max_takes=a.max_takes, bench=a.bench, corpus=a.corpus,
+          archive_only=a.archive_only)
 
 
 if __name__ == "__main__":

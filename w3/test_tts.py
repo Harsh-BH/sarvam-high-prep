@@ -89,6 +89,20 @@ def main():
     other = json.loads(open(again / "records.jsonl").readline())
     assert other["id"] == "rec-400100" and other["_archive"]["tts"] != recs[0]["_archive"]["tts"]
 
+    rej = Path(tempfile.mkdtemp())  # re-judge from the archive + cached hypotheses: no render, no ASR
+    for m in ("w2v", "ic"):
+        (rej / "asr").mkdir(exist_ok=True)
+        (rej / "asr" / f"{m}.jsonl").write_bytes((out / "asr" / f"{m}.jsonl").read_bytes())
+    tts.stage(S, rej, "fake", s3=f, synth=counting, asr=None, ids={tts.text_key(x): (f"rec-4{i:05d}", x["pid"])
+              for i, x in enumerate(S, 100)}, bank=BANK, spool=spool, archive_only=True)
+    assert [json.loads(l)["id"] for l in open(rej / "records.jsonl")] == ["rec-400100", "rec-400102"]
+    try:  # a take that isn't archived is refused, not rendered
+        tts.stage([script("w2-09999", ["नया", "पाठ"], [], "m")], Path(tempfile.mkdtemp()), "fake", s3=f, synth=counting,
+                  asr=None, ids={}, bank=BANK, spool=spool, archive_only=True, bench=True)
+        raise AssertionError("archive-only rendered")
+    except SystemExit as e:
+        assert "not archived" in str(e)
+
     n = len(calls)  # a finished run is a no-op: nothing rendered, nothing heard
     run(out, S, [], f, spool, synth=counting)
     assert len(calls) == n and len(open(out / "records.jsonl").readlines()) == 2
