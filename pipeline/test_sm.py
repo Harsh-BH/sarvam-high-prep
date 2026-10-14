@@ -36,6 +36,25 @@ def main():
     sm._dirty = lambda: True
     assert sm.submit("audio_qc", "stages/cut/R0", "stages/cut/R0", [], run="R", instance="ml.c5.xlarge", spot=False,
                      sagemaker=object(), s3=object()) == 3
+    # account instance limits: ResourceLimitExceeded is waited out, other errors raise at once
+    from botocore.exceptions import ClientError
+    class SM:
+        def __init__(self, fails, code="ResourceLimitExceeded"):
+            self.fails, self.code, self.calls = fails, code, 0
+        def create_training_job(self, **kw):
+            self.calls += 1
+            if self.calls <= self.fails:
+                raise ClientError({"Error": {"Code": self.code}}, "CreateTrainingJob")
+            return {"TrainingJobArn": "arn"}
+    naps = []
+    s = SM(2)
+    assert sm._create(s, {}, wait=5, tries=4, sleep=naps.append) == {"TrainingJobArn": "arn"} and s.calls == 3 and naps == [5, 5]
+    for bad in (SM(9), SM(1, "ValidationException")):
+        try:
+            sm._create(bad, {}, wait=5, tries=4, sleep=naps.append)
+            raise AssertionError("should have raised")
+        except ClientError:
+            pass
     print("ok: sm")
 
 
