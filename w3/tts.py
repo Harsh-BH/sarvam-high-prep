@@ -482,9 +482,10 @@ def listen(run, out, per_gender=6, fillers=4, s3_run=None):
         if r["source"]["voice"] not in voices and sum(v == g for v in voices.values()) < per_gender:
             voices[r["source"]["voice"]] = g
             pick.append((r, f"native Indian Hindi accent? a {'female' if g == 'f' else 'male'} voice?"))
+    nv = len(pick)
     for r in recs:
         f = [w for s in r["sentences"] for w in s["hi_text"][:-1].split() if w in qa.FILLERS]
-        if f and r not in [x for x, _ in pick] and len(pick) < 2 * per_gender + fillers:
+        if f and r not in [x for x, _ in pick] and len(pick) - nv < fillers:
             pick.append((r, f"is the filler '{' '.join(f)}' audible where the transcript has it?"))
     (out / "audio").mkdir(parents=True, exist_ok=True)
     with open(out / "listen.tsv", "w", encoding="utf-8") as f:
@@ -506,7 +507,7 @@ def main(argv=None):
     if argv and argv[0] == "report":
         return report(jsonl(argv[1]), argv[2:])
     if argv and argv[0] == "listen":
-        n, mins = listen(argv[1], argv[2], per_gender=int(argv[3]) if len(argv) > 3 else 6,
+        n, mins = listen(argv[1], argv[2], per_gender=int(argv[3]) if len(argv) > 3 else 6, fillers=2,
                          s3_run=argv[4] if len(argv) > 4 else None)
         print(f"{n} clips, {mins:.1f} min of audio -> {argv[2]}/listen.tsv")
         return
