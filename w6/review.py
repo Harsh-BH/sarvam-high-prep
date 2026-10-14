@@ -69,8 +69,8 @@ def build(a):
     part_b = [{**x, "judges_say": ""} for x in rng.sample(none, min(15, len(none)))]
     part_c, key = [], {}
     if a.ab:
-        ea, eb = (load([d]) for d in a.ab)
-        pairs = [(r1, i, s1["en_text"], s2["en_text"]) for r1, r2 in zip(ea, eb) for i, (s1, s2) in
+        ea, eb = load([a.ab[0]]), {r["id"]: r for r in load([a.ab[1]])}
+        pairs = [(r1, i, s1["en_text"], s2["en_text"]) for r1 in ea if r1["id"] in eb for r2 in [eb[r1["id"]]] for i, (s1, s2) in
                  enumerate(zip(r1["sentences"], r2["sentences"])) if s1["en_text"] != s2["en_text"]
                  and len(set(s1["en_text"].lower().split()) ^ set(s2["en_text"].lower().split())) >= 3]
         for r1, i, t1, t2 in rng.sample(pairs, min(10, len(pairs))):

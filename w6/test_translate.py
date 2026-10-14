@@ -97,4 +97,25 @@ with tempfile.TemporaryDirectory() as d:
     ids = [json.loads(l)["id"] for l in open(d / "out/records.jsonl")]
     assert ids == ["rec-400000", "rec-400001"], ids
     assert calls[0] == ("mistral3", "translate") and len([c for c in calls if c[1] == "translate"]) == 1
+# 6. review import: fixes in parts A/B become patches (write-once archive + w6/patches.jsonl), part C maps to engines
+import csv, io, contextlib, review  # noqa: E402
+with tempfile.TemporaryDirectory() as d:
+    d = Path(d)
+    rows = [{"n": 1, "part": "A", "id": "rec-1", "i": 0, "hindi": "h", "english_a": "Old.", "answer": "y", "fix": " New  text. "},
+            {"n": 2, "part": "B", "id": "rec-2", "i": 1, "hindi": "h", "english_a": "Fine.", "answer": "n", "fix": ""},
+            {"n": 3, "part": "C", "id": "rec-3", "i": 0, "hindi": "h", "english_a": "x", "english_b": "y", "answer": "b", "fix": ""}]
+    with open(d / "review.tsv", "w", newline="") as f:
+        w = csv.DictWriter(f, review.COLS, delimiter="\t", lineterminator="\n", restval="")
+        w.writeheader(); w.writerows(rows)
+    (d / "review_key.json").write_text(json.dumps({"rec-3:0": {"a": "/x/mistral3.gptoss", "b": "/x/qwen3.gptoss"}}))
+    put = {}
+    review.store.put_once = lambda k, b: put.setdefault(k, b) is b
+    tr.PATCHES = d / "patches.jsonl"
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        review.do_import(type("A", (), {"tsv": str(d / "review.tsv"), "who": "test"})())
+    p = [json.loads(l) for l in open(d / "patches.jsonl")]
+    assert p == [{"id": "rec-1", "i": 0, "en_text": "New text.", "was": "Old."}], p
+    assert list(put.values())[0].decode() == open(d / "patches.jsonl").read()
+    assert "1/1 flagged" in out.getvalue() and "0/1 unflagged" in out.getvalue() and "qwen3.gptoss': 1" in out.getvalue(), out.getvalue()
 print("ok: translate")
