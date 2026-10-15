@@ -24,6 +24,7 @@ CACHE = _main_checkout() / "data/cache"  # one cache for all worktrees, so a ses
 WHERE = "sagemaker" if Path("/opt/ml/input/config").exists() else "local"
 VALIDATE = ["uv", "run", str(ROOT / "validate.py")]
 STAGES = {
+    "cut": {"cmd": ["uv", "run", str(ROOT / "scale/real/cut_iv.py")], "makes_audio": True, "gpu": False},
     "audio_qc": {"cmd": ["uv", "run", str(ROOT / "pipeline/audio_qc.py")], "makes_audio": False, "gpu": False},
     "dedupe": {"cmd": ["uv", "run", str(ROOT / "pipeline/dedupe.py")], "makes_audio": False, "gpu": False},
     "transcribe": {"cmd": ["uv", "run", str(ROOT / "w4/convert.py")], "makes_audio": False, "gpu": False},
