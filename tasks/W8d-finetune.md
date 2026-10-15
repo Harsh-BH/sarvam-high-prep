@@ -240,3 +240,65 @@ These are inferences from the runs above, not measurements.
 - **What data does not fix:**
   - **Latency control.** The EMMA policy has no released training code. Our latency changes are side effects of decoder drift. A latency target needs either p_choose distillation/regularisation (cheap, our code) or reimplementing EMMA's expected-alignment loss (2312.05187 §4; days of work).
   - **The voice.** T2U and vocoder are not trainable with released code, and the output is Seamless's own 16 kHz unit voice, not Bulbul `shubh`.
+
+## Status — 2026-10-15
+
+**Done:**
+- Recipe researched in the code (§1).
+- Pairs from train.txt only (§2), guarded against held-out ids, speakers and voices.
+- Two LoRA runs on SageMaker (§3). Streaming eval of base vs FT with W8c's harness on dev, test and FLEURS (§4).
+
+**Choosing the checkpoint:**
+- Picked on dev, never on test, by the metric declared beforehand: dev ASR-COMET, speech track.
+- Run 1 0.757 vs run 2 0.753. Real 0.752 vs 0.747; synthetic 0.772 vs 0.770. Inside the dev CI.
+- **Run 1 is the result:** `s3://sarvam-parta-114872709824/w8d/20261014T205030Z-4b7a960/ckpt/decoder.pt` (NC-derived, private).
+- Run 2's lower real-dev NLL did not turn into better streaming COMET. Offline NLL is a weak selector here.
+- Run 2 eval: `stages/w8c_eval/20261015T003603Z-ab4c1f2/dev`.
+
+**Result** (test, unseen real speakers, run 1 vs base):
+- ASR-COMET 0.716 → 0.742 (+0.026, 95% CI [+0.014, +0.038]); ASR-BLEU 18.1 → 23.5; number accuracy 0.44 → 0.71.
+- LAAL 4.97 → 4.58 s; StartOffset 3.96 → 3.51 s.
+- EndOffset 2.90 → 3.60 s. It rises because the base stopped early: output/ref length 0.83 → 1.00.
+- FLEURS (human references, out of domain): speech COMET flat (+0.003, CI spans 0), text COMET −0.007, BLEU −3, numbers +0.09.
+- Collapsed outputs (< 40% of reference words) on test: base 2 real + 2 synthetic, FT 1 real (`rec-800116`: "I'll take care of it myself.") + 0.
+- **Honest read:** 6 h moved the model, mainly through coverage (it no longer stops early on multi-sentence sessions), W6 house style and number rendering. The meaning gain on real speech is real but small, and there is no general-domain gain.
+
+**Spend:**
+
+| Item | Cost |
+|---|---|
+| Run 1: ml.g5.2xlarge, 886 s | $0.45 |
+| Run 2: ml.g5.2xlarge, 1,026 s | $0.52 |
+| Losing capacity-race jobs: 6, never started | $0 |
+| **W8d's own jobs** | **$0.97** of the $40 cap |
+| Evaluation jobs (run-1 FT dev+test $3.10 and FLEURS $2.09; run-2 dev ≈ $1.3) | On W8c's ledger: see tasks/W8c-eval.md, not double-counted here |
+
+- credits.sh: NET $0.00. Cost Explorer lags ~24 h, so today's jobs aren't in it yet.
+
+**Licences:** Seamless weights CC BY-NC 4.0. `decoder.pt` and all outputs are NC-derived and trained partly on Bulbul (Sarvam) audio: private, never publish.
+
+**Handoffs:**
+- **W8c / master:**
+  - The fine-tuned decoder loads with `load_state_dict(strict=True)` over the base `seamless_streaming_monotonic_decoder`.
+  - Env: DLC `pytorch-training:2.2.0-gpu-py310-cu121` + `fairseq2n==0.2.1+cu121` from Meta's pt2.2.0 index (no torch reinstall).
+- **Next experiments,** in the order I'd run them:
+  1. LoRA rank/LR sweep with early stopping on the full dev set (cheap, ~$0.5 per run).
+  2. Add sentence-level clips.
+  3. p_choose distillation, to hold latency fixed while quality moves.
+  4. Encoder LoRA, once real hours grow (§5).
+  5. A UTMOS metric in W8c's harness, to measure T2U drift.
+- **Scale streams:** rerunning `w8d/submit.py` on a larger release is one command (`--source release/<tag>/manifest.jsonl=release/<tag>/audio/`). Re-tune the steps: the optimum was ~4 epochs at 6 h.
+
+**Blockers:** none.
+
+**Optional for Harsh** (≤ 10 min, ears; naturalness is the one thing not measured):
+- Listen to 3 base/FT pairs:
+  - `rec-400033`: coverage, the base drops the last question;
+  - `rec-800201`: the biggest real gain;
+  - `rec-800116`: FT collapses.
+- Fetch them:
+  ```
+  for i in rec-400033 rec-800201 rec-800116; do for r in 20261014T222707Z-e398964 20261014T222712Z-e398964; do aws s3 cp s3://sarvam-parta-114872709824/stages/w8c_eval/$r/test/$i.wav /tmp/$i-$r.wav --profile harsh-admin; done; done
+  ```
+  `…222707Z` is the base, `…222712Z` is FT. The wavs are the emitted frames, not timeline-placed.
+- Question: does FT sound as natural as the base? T2U and vocoder were not trained, but they now read different decoder states.
