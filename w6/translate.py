@@ -39,6 +39,7 @@ MODELS = {"qwen3": ("qwen.qwen3-235b-a22b-2507-v1:0", .26, 1.04),
           "dsv32": ("deepseek.v3.2", .74, 2.22)}
 IT2 = {"model": "prajdabre/rotary-indictrans2-indic-en-dist-200M", "rev": "00213ee82929050694b162123bb26a8dc177cdae"}
 USD_INR = 88.0
+STREAM = "w6"  # spend ledger; another stream translating its own records passes --stream/--cap-inr
 CAP_INR = 6000.0  # shared "w6" ledger. 2500 (W6 + synthetic pilot) + 3500 for S1 scale-real (~31 h of real records at ~94 INR/h estimated; the archive estimate over-counts actual usage ~1.66x). S1's own AWS cap is $25
 TAKES = 3  # hard-check failures (bad JSON, wrong segment count, Devanagari) retry up to this many takes
 JUDGE_CRITICAL = {"meaning", "omission", "addition", "number", "negation", "intent", "correction", "name"}
@@ -123,7 +124,7 @@ def llm(name, system, user, take, max_tokens):
     # spend estimate written to the archive before the call (archive_call's cap); real usage is in the response
     est_out = len(user) / 2 + (1500 if name == "gptoss" else 0)
     inr = ((len(system) + len(user)) / 2.5 * pin + est_out * pout) / 1e6 * USD_INR
-    resp, _ = archive.archive_call("bedrock", req, _converse, stream="w6", inr=round(inr, 4), cap_inr=CAP_INR)
+    resp, _ = archive.archive_call("bedrock", req, _converse, stream=STREAM, inr=round(inr, 4), cap_inr=CAP_INR)
     return resp["text"], "archive/api/bedrock/" + archive.request_key(req)
 
 
@@ -200,7 +201,7 @@ def translate(engine, his, gl, take0=0, user=None):
     keys, err = [], None
     for take in range(take0, take0 + TAKES):
         if engine == "it2":
-            resp, _ = archive.archive_call("it2", it2_request(his), _it2_missing, stream="w6", inr=0, cap_inr=CAP_INR)
+            resp, _ = archive.archive_call("it2", it2_request(his), _it2_missing, stream=STREAM, inr=0, cap_inr=CAP_INR)
             keys.append("archive/api/it2/" + archive.request_key(it2_request(his)))
             segs = [{"en": " ".join(t.split()) or "."} for t in resp["segments"]]
         else:
@@ -351,6 +352,7 @@ def apply_patches(rec, patches):
 
 
 def main():
+    global STREAM, CAP_INR
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--in", dest="inp", type=Path, required=True)
     ap.add_argument("--audio-dir", type=Path, required=True)
@@ -359,7 +361,10 @@ def main():
     ap.add_argument("--judge", default="gptoss", choices=sorted(MODELS) + [""])
     ap.add_argument("--no-repair", action="store_true")
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--stream", default=STREAM)
+    ap.add_argument("--cap-inr", type=float, default=CAP_INR)
     a = ap.parse_args()
+    STREAM, CAP_INR = a.stream, a.cap_inr
     if a.judge == a.engine:
         raise SystemExit("the judge must be another model family than the engine")
     a.out.mkdir(parents=True, exist_ok=True)
@@ -369,7 +374,7 @@ def main():
             p.write_bytes(b[: b.rfind(b"\n") + 1])  # a crash tore the last line: drop it, that id is redone
     done = {json.loads(l)["id"] for f in ("records.jsonl", "rejects.jsonl") if (a.out / f).exists() for l in open(a.out / f)}
     todo = [r for r in map(json.loads, open(a.inp, encoding="utf-8")) if r["id"] not in done]
-    prefill_spent()
+    prefill_spent(STREAM)
     patches = {}
     if PATCHES.exists():
         for l in open(PATCHES, encoding="utf-8"):

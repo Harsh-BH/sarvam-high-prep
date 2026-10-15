@@ -295,7 +295,7 @@ def spc_ref(rows, voice, engine, n=8):
 
 
 def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-v1", s3=None, synth=None, asr=None,
-          load16k=None, ids=None, bank=None, spool=archive.SPOOL, archive_only=False):
+          load16k=None, ids=None, bank=None, spool=archive.SPOOL, archive_only=False, voices_path=VOICES):
     out = Path(out)
     (out / "audio").mkdir(parents=True, exist_ok=True)
     (out / "asr").mkdir(exist_ok=True)
@@ -305,7 +305,7 @@ def stage(scripts, out, engine, *, max_takes=3, bench=False, corpus="w2-scripts-
         if (b := p.read_bytes()) and not b.endswith(b"\n"):
             p.write_bytes(b[: b.rfind(b"\n") + 1])  # a crash tore the last line: drop it, that script is redone
     engines = engine.split(",")  # several: a script starts on one (stable hash of its pid), retakes rotate
-    banks = {e: bank or voices(e, ENGINES[e]["clone"]) for e in engines}
+    banks = {e: bank or voices(e, ENGINES[e]["clone"], voices_path) for e in engines}
     ids = ids_table() if ids is None else ids
     takes = {r["key"]: r for r in jsonl(out / "takes.jsonl")}
     done = {r["id"] for f in ("records.jsonl", "rejects.jsonl") for r in jsonl(out / f)}
@@ -524,12 +524,13 @@ def main(argv=None):
     ap.add_argument("--bench", action="store_true")
     ap.add_argument("--limit", type=int, default=0, help="first N scripts only (smoke runs)")
     ap.add_argument("--archive-only", action="store_true", help="re-judge archived takes; fail if one would be rendered")
+    ap.add_argument("--voices", type=Path, default=VOICES, help="voice bank, relative to the repo root (default w3/voices.tsv)")
     a = ap.parse_args(argv)
     if bad := set(a.engine.split(",")) - set(ENGINES):
         ap.error(f"unknown engine(s) {sorted(bad)}")
     scripts = jsonl(a.inp)
     stage(scripts[: a.limit] if a.limit else scripts, a.out, a.engine, max_takes=a.max_takes, bench=a.bench, corpus=a.corpus,
-          archive_only=a.archive_only)
+          archive_only=a.archive_only, voices_path=ROOT / a.voices)
 
 
 if __name__ == "__main__":
