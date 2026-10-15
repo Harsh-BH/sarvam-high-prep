@@ -78,3 +78,110 @@ Measured from W6's archived usage on the real pilot: translation costs **$0.644 
 - `w1/ids.tsv` +4,197 rows (commit ddb2ee7).
 
 **Round 2 (top-ups):** each shard is continued (`--continue`), with quota Extempore 1.0 h + Read 0.15 h, ids from rec-011001. The target is ≈35 h cut, so that ≈30 h survive the stages.
+
+### 2026-10-15, cut round 2 (top-ups) and the stages
+
+**Top-ups.** 10 shards, each continuing its round-1 run with `--continue`. They ran on-demand ml.m5.large to leave the shared spot pool free. Result: 1,887 clips, 11.14 h (Extempore 9.98, Read 1.16), 0 violations. `w1/ids.tsv` +1,887 rows (rec-011001…rec-020194, commit 24408a0).
+
+**Stages.** `scale/real/chain.sh` ran per shard, 20 shards. Two changes along the way:
+- **Spot cap raised.** The master approved 7 spot instances, provided account-wide spot use stays ≤ 8. Each SageMaker submit now holds a submit lock and waits while `spot_used` ≥ 8.
+- **Bug fixed (ad84083).** The backgrounded `run.py` inherited the submit-lock file descriptor and kept the lock for its whole job. That stalled every other chain for about 1.5 h. Cost: wall time only. Fix: `{sl}>&-` on the child.
+
+## Status — 2026-10-15
+
+**Done.** +30.005 h of real, complete records: 5,384 records from 792 speakers, IndicVoices Hindi *train* only. The real total is now 3.074 + 30.005 = **33.08 h**.
+
+**Checks:**
+- Every stage run: `validate.py --partial` 0 violations.
+- `report.py check` across all 20 complete runs:
+  - 0 duplicate ids, and every id registered in `w1/ids.tsv` with its exact span;
+  - 0 overlapping spans, pilot-v2's real records included;
+  - 0 held out by w8c's `is_heldout()`;
+  - 0 already in a release, and 0 records missing `en_text` or `hi_words`.
+- **Rebuild:** 40 sampled clips (2 per shard) were re-cut from `raw/` with the pinned ffmpeg, after checking the sha256 sidecar. 40/40 are byte-identical to the stage audio.
+
+**Hours kept at each stage** (`uv run scale/real/report.py stats`):
+
+| Stage | Records | Hours | Lost h | Rejects by rule |
+|---|---|---|---|---|
+| cut | 6,084 | 34.622 | – | held-out files skipped at cut: 16,348 file visits in round 1 (not records) |
+| audio_qc | 5,976 | 34.051 | 0.571 | silence 59, snr 20, level 19, clipping 10 |
+| dedupe | 5,976 | 34.051 | 0 | – |
+| transcribe | 5,960 | 33.930 | 0.121 | chars 16 |
+| align | 5,511 | 30.663 | 3.267 | unspoken 284, filler_short 149, align_vocab 11, align_regret 5 |
+| asr_check | 5,384 | 30.005 | 0.658 | P1 72, P2 55 |
+| translate | 5,384 | 30.005 | 0 | – (1,807 records took the repair round) |
+
+86.7% of cut hours survive. align is the main loss (9.6%), close to the pilot's 10.5%.
+
+**Mix of the kept hours:**
+- By scenario: Extempore 22.003 h, Read 4.520 h, Conversation 3.482 h (8 kHz telephone). `audio_qc` labels 4.288 h as telephone.
+- Speakers: 2,877 male / 2,490 female / 17 other (by record), from 5 states.
+- Duration p10/50/90: 11.0 / 16.0 / 36.6 s (range 10.0–59.8 s).
+- Conversation is limited by supply. Under W1's strict one-speaker rule and this held-out set, IV Hindi train holds about 4.3 h of conversation clips, and all of it was cut.
+
+**Spend (list price; AWS credits, NET $0.00 at the last `credits.sh`. Cost Explorer lags ~24 h, so this run isn't in it yet):**
+
+| Item | Jobs | Instance | Training s | Billable s | Cost |
+|---|---|---|---|---|---|
+| cut round 1 (spot) | 10 | ml.m5.large, ml.c5.xlarge | 9,140 | 3,154 | $0.13 |
+| cut round 2 (on-demand) | 10 | ml.m5.large | 5,380 | 5,380 | $0.18 |
+| align (spot) | 20 | ml.c5.2xlarge | 9,339 | 2,810 | $0.32 |
+| asr_check (spot) | 20 | ml.c5.2xlarge | 68,424 | 20,438 | $2.32 |
+| Bedrock, translate (Mistral Large 3 + gpt-oss-120b judge), from archived token usage | ≈ 16.5k calls | – | – | – | $18.54 |
+| **Total** | | | | | **$21.49** of the $25 cap: **$0.72 per kept hour** |
+| S3, new storage | | | | | +19.4 GB `raw/indicvoices` and ≈ 6 GB clip audio: ≈ $0.65/month |
+
+- Sarvam: ₹0.
+- The local stages (audio_qc, dedupe, transcribe, translate) ran on the laptop and cost $0.
+- Peak local disk was ≈ 0.6 GB: one shard's audio at a time, deleted after use. Nothing is left in the cache.
+
+**Final runs for assembly.** These 20 `translate` runs are whole records: every field, plus `_w1`, `_qa` and `_archive` to strip.
+
+```
+stages/translate/20261014T224328Z-0358465-v1p0
+stages/translate/20261015T003716Z-ad84083-v1p0b
+stages/translate/20261014T225802Z-0358465-v1p1
+stages/translate/20261015T005958Z-ad84083-v1p1b
+stages/translate/20261014T235953Z-ad84083-v2p0
+stages/translate/20261015T012252Z-ad84083-v2p0b
+stages/translate/20261015T005341Z-ad84083-v2p1
+stages/translate/20261015T014807Z-ad84083-v2p1b
+stages/translate/20261014T232321Z-0358465-v3p0
+stages/translate/20261015T020327Z-ad84083-v3p0b
+stages/translate/20261015T021439Z-ad84083-v3p1
+stages/translate/20261015T022512Z-ad84083-v3p1b
+stages/translate/20261015T012834Z-ad84083-v4p0
+stages/translate/20261015T023210Z-ad84083-v4p0b
+stages/translate/20261015T015325Z-ad84083-v4p1
+stages/translate/20261015T023814Z-ad84083-v4p1b
+stages/translate/20261014T223844Z-0358465-v5p0
+stages/translate/20261015T025014Z-dc2f2a3-v5p0b
+stages/translate/20261015T014001Z-ad84083-v5p1
+stages/translate/20261015T024419Z-ad84083-v5p1b
+```
+
+- Each run's audio is its shard's cut run (`run.json` `audio_from`; `data/scale-real/chains/<tag>.cut`).
+- The full chain per shard is in `data/scale-real/chains/<tag>.tsv`.
+
+**Blockers:** none.
+
+**Handoffs:**
+- **W7 / master (assembly):**
+  - Pass the 20 runs above to `w7/assemble.py`, together with pilot-v2's runs. Ids don't collide with pilot-v2 (checked).
+  - Real sources are in `raw/indicvoices/…` with sha256 sidecars, so `rebuild` needs nothing new.
+  - The last stage is now `translate`, not `asr_check`.
+- **w8c:**
+  - S1 never used an IV-valid speaker (all 483), nor any IV person a W3 voice clones. You can grow the held-out set from IV-valid speakers without leaking into S1's data.
+  - The 17 "Other"-gender records are ordinary IV speakers.
+- **Master (shared code, not edited by S1 beyond the lines named above):**
+  1. `run.run_local` downloads the audio even for text-only stages (`transcribe`, `translate`). Together with the SageMaker role having **no Bedrock permission**, that forced `translate` to run locally with a per-shard audio download. A Bedrock grant on `sarvam-sm-role` (Converse / InvokeModel on the two model ids) would let it run on SageMaker.
+  2. SageMaker `_ckpt/` copies under `stages/<stage>/<run>/_ckpt/` duplicate each run's outputs in S3. For S1's cut runs that is ≈ 6 GB of clip audio, ≈ $0.15/month. They are safe to delete once you're happy with the runs.
+  3. `w4/asr_run.hypotheses()` still holds each model's output file open until the model finishes (W7's handoff). No spot interruption hit S1, but one would lose that model's progress.
+  4. The account-wide spot limit (10 instances across all training jobs) is the real limit on throughput. `asr_check` takes 68 k training seconds for 30 h of audio.
+  5. My `w6/translate.py` change is only `CAP_INR` 2,500 → 6,000, on the shared `w6` estimate ledger.
+- **More real hours, if wanted:**
+  - Extempore and Read supply is large: most of each archive was streamed past with the quota already full. Another `--continue` round would add ≈ 1 h per shard per hour of quota, at ≈ $0.72 per kept hour.
+  - More **Conversation** needs a policy change: W1's audibility-gated one-speaker variant (≈ 2.5× yield), or IV-valid speakers that w8c doesn't hold out.
+
+**Optional list for Harsh (≈ 5 min of audio, ≤ 10 min of time).** `data/scale-real/listen.tsv` lists 20 new conversation (telephone) clips, picked by crc32. For each, fetch the clip with `aws s3 cp <s3 key> . --profile harsh-admin`, listen, and write ok / 2nd voice / bad text in the last column. It spot-checks the one-speaker rule on the new conversation clips, the only rule no model can check (SPEC §1). Skip it if the pilot listening already covered this.
