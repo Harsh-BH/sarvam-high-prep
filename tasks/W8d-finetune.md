@@ -126,18 +126,94 @@ The unity card's own offline text decoder is disabled in streaming (`use_text_de
 | Run | Instance | Data | Hyperparameters | Result | Spend |
 |---|---|---|---|---|---|
 | `20261014T205030Z-4b7a960` | ml.g5.2xlarge on-demand, 886 s billed. g6e.xlarge, g6.2xlarge and g4dn.2xlarge were also submitted; they were still pending when g5 started and were stopped at $0 | train 1,010 records (6.09 h); dev = the 33 held-out-voice pilot-v2 ids (synthetic only; real dev references not yet ready) | LoRA r16, α32, dropout 0.05, 13.4 M trainable; batch 8, 800 steps (6.3 epochs), lr 1e-4, 50 warm-up then linear to 0; label smoothing 0.1; bf16 autocast | **Dev NLL 0.963 → 0.650** nats/token (best at step 750; still creeping down, no overfitting yet). Train loss (smoothed) 3.38 → 2.21. Teacher-forced p_choose: mean 0.447 → 0.488, share ≥ 0.5 0.401 → 0.445, mean \|Δ\| 0.048, so the policy should write earlier. Timing: encode 1,043 records 275 s; 800 steps 300 s | $0.45 ($1.82/h) |
+| `20261015T001450Z-6aaaaed` | ml.g5.2xlarge on-demand, 1,026 s billed. g6.2xlarge, g6e.xlarge and g4dn.2xlarge stopped at $0 | train as run 1; **dev = W8c's full dev set** (`stages/w8c_sets/20261014T221953Z-e398964/dev.jsonl`): 91 real IV-valid + 33 synthetic, all with references | As run 1, but the schedule decays over 1,600 steps, patience 6 | **Best at step 500** (≈ 4 epochs), then dev rises; early stop at 800. Full-dev NLL 1.222 → 0.951. **Real dev 1.347 → 1.096**; synthetic dev 0.963 → 0.653. p_choose share ≥ 0.5 0.382 → 0.436, mean \|Δ\| 0.061 | $0.52 |
 
-**Run 1 dev-curve:**
+**Dev curves** (NLL nats/token; run 1 = 33 synthetic dev, run 2 = full 124-record dev):
 
 | Step | 0 | 50 | 100 | 200 | 300 | 400 | 500 | 600 | 700 | 800 |
 |---|---|---|---|---|---|---|---|---|---|---|
-| Dev NLL | 0.963 | 0.866 | 0.796 | 0.723 | 0.693 | 0.673 | 0.660 | 0.653 | 0.652 | 0.650 |
+| Run 1 | 0.963 | 0.866 | 0.796 | 0.723 | 0.693 | 0.673 | 0.660 | 0.653 | 0.652 | 0.650 |
+| Run 2 | 1.222 | 1.090 | 1.041 | 0.992 | 0.970 | 0.960 | **0.951** | 0.951 | 0.960 | 0.968 |
+
+**Overfitting:**
+- On real speech the adapter starts overfitting after ~4 epochs at lr 1e-4.
+- Run 1 avoided it only because its LR had decayed to near 0 by then.
+- The 33 synthetic dev records alone were too easy to show it: same TTS engines and W2 script style as train, only the voices held out.
 
 **Caveat on the offline number:**
 - The references are W6's Mistral-Large translations in the w6-style-v1 house style.
 - Part of the NLL drop is the decoder learning that style (punctuation, number formats, register), not better understanding of the Hindi.
 - COMET and the intent/entity proxies in the streaming eval are the better read on meaning.
 
-## 4. Evaluation
+## 4. Evaluation (run 1 vs base)
 
-_W8c harness (`w8c/run_seamless.py` + `w8c/eval.py score`), base vs fine-tuned, dev and test, text and speech tracks, latency._
+**How it was run:**
+- W8c ran its harness for base and FT with identical settings:
+  - simulated real time: 80 ms frames, 320 ms agent blocks;
+  - no VAD, `max_len_a = 1`, `max_len_b = 200`, fp16, on an A10G;
+  - Whisper large-v3-turbo on the output speech, `wmt22-comet-da`, W6 entity parser.
+- 0 failed sessions anywhere.
+- Raw numbers:
+  - `stages/w8c_eval/20261014T222707Z-e398964` (base) vs `…/20261014T222712Z-e398964` (FT) for dev + test;
+  - `…/20261014T210742Z-46901b9` vs `…/20261014T210815Z-46901b9` for FLEURS.
+  - I re-read every `scores.json` from S3; the tables below are those files.
+- Full write-up and bootstrap CIs: tasks/W8c-eval.md on stream/w8c (ab4c1f2).
+
+**Sets:**
+- dev 124 records / 0.75 h: 91 real IndicVoices-valid + 33 synthetic held-out voices;
+- test 199 / 1.21 h: 154 + 45;
+- FLEURS-hi 418 / 1.34 h, human references.
+
+**Speech track** (Whisper on output audio), base → FT:
+
+| Set | ASR-BLEU | ASR-chrF++ | ASR-COMET | Numbers acc | Entity acc |
+|---|---|---|---|---|---|
+| dev real (91) | 22.6 → 31.3 | 46.4 → 55.9 | 0.739 → 0.751 | 0.64 → 0.62 | 0.80 → 0.82 |
+| dev synthetic (33) | 13.8 → 35.6 | 34.6 → 57.8 | 0.681 → 0.772 | 0.30 → 0.45 | 0.44 → 0.58 |
+| **test real (154)** | 18.1 → 23.5 | 41.6 → 50.2 | **0.716 → 0.742** | 0.44 → 0.71 | 0.75 → 0.79 |
+| test synthetic (45) | 12.9 → 35.1 | 35.5 → 58.5 | 0.691 → 0.773 | 0.30 → 0.42 | 0.37 → 0.44 |
+| **FLEURS (418)** | 27.8 → 24.9 | 53.7 → 53.7 | **0.821 → 0.824** | 0.72 → 0.81 | 0.81 → 0.84 |
+
+On test real, W8c's paired bootstrap gives ASR-COMET Δ +0.026 [95% CI +0.014, +0.038], and FT is better on 107/154 records. On FLEURS: Δ +0.003 [−0.004, +0.011].
+
+**Text track** (S2TT, the decoder's own text), base → FT:
+
+| Set | BLEU | COMET | Numbers acc |
+|---|---|---|---|
+| test real | 16.9 → 25.7 | 0.729 → 0.762 | 0.64 → 0.80 |
+| test synthetic | 17.5 → 45.8 | 0.730 → 0.829 | 0.46 → 0.73 |
+| FLEURS | 25.3 → 22.1 | 0.830 → 0.823 (Δ −0.007 [−0.012, −0.002]) | 0.78 → 0.80 |
+
+**Latency** (`t0` = zero-compute timeline, so independent of the GPU; seconds):
+
+| Set | StartOffset | EndOffset | LAAL | Text LAAL |
+|---|---|---|---|---|
+| test real | 3.96 → 3.51 | 2.90 → 3.60 | 4.97 → 4.58 | 3.80 → 3.13 |
+| test synthetic | 3.59 → 3.37 | 1.09 → 4.93 | 5.58 → 5.64 | 3.68 → 3.50 |
+| FLEURS | — | 2.57 → 2.47 | 4.56 → 4.26 | 2.74 → 2.38 |
+
+With this A10G's compute included (`t`), test LAAL is 5.60 → 5.32.
+
+**Output length / reference length (words):**
+- test real: text 0.83 → 1.00, ASR 0.80 → 0.97;
+- test synthetic: text 0.66 → 1.07, ASR 0.60 → 0.94.
+- The base **stops early on multi-sentence clips**. Example `rec-400033`: the base drops "Is my KYC incomplete?"; FT says it.
+
+**Reading:**
+1. **Most of the gain is coverage plus house style, not better listening.**
+   - The base under-translates our 10–60 s multi-sentence sessions. FT learned to keep going to the end.
+   - That alone explains most of the BLEU jump and the EndOffset rise: the base's EndOffset looked good only because it went quiet early.
+   - FT also adopted W6's style ("fourteenth of August", "lakh"), which lifts BLEU against W6 references and helps the number/entity scorers.
+2. **Meaning improves modestly but significantly on unseen real speakers.** Test real ASR-COMET +0.026 (CI excludes 0). Dev real is only +0.012, and dev-real number accuracy dips slightly (0.64 → 0.62), so the real-speech gain is small.
+3. **No general gain, mild text-style forgetting on FLEURS.**
+   - FLEURS has human references and news-style single sentences.
+   - Speech-track COMET is flat (+0.003, CI spans 0). Text COMET is −0.007 (CI excludes 0). BLEU −3.
+   - Number accuracy still rises (+0.09).
+   - Expected from 6 h of one style: the adapter moves the output towards W6's register.
+4. **Latency improved where it is policy-driven.**
+   - StartOffset −0.2 to −0.45 s, LAAL −0.3 to −0.4 s on real and FLEURS, text LAAL −0.4 to −0.7 s.
+   - This matches the teacher-forced p_choose shift (share ≥ 0.5: 0.401 → 0.445). Even with `p_choose` frozen, LoRA on the decoder moved its inputs towards "write".
+   - Not a free lunch: it is uncontrolled. The next lever is p_choose distillation, or a decision-threshold sweep at inference.
+5. **Speech (T2U drift):**
+   - No measured damage: ASR-based scores track the text-track gains, so the T2U still voices the new decoder states intelligibly.
+   - **Not measured:** UTMOS / naturalness. W8c's harness has no audio-quality metric yet.
