@@ -8,6 +8,8 @@
     uv run scale/real/report.py ids stages/cut/<run> ...      # append the runs' ids_new.tsv rows to w1/ids.tsv
     uv run scale/real/report.py stats                         # every chain in data/scale-real/chains/: hours per stage,
                                                               # rejects by rule, SageMaker + Bedrock cost
+    uv run scale/real/report.py check                         # the complete runs together: unique registered ids,
+                                                              # no overlap (also with pilot-v2), nothing held out
 """
 import collections as C, json, sys
 from concurrent.futures import ThreadPoolExecutor
@@ -103,6 +105,26 @@ def stats():
     print("\nComplete runs (assembly input):\n" + "\n".join(complete))
 
 
+def check(release="release/pilot-v2"):
+    """Cross-shard checks validate.py --partial can't do one run at a time. -> True if clean."""
+    recs = [r for runs in chains().values() if "translate" in runs for r in records(runs["translate"])]
+    reg = {l.split("\t")[0]: tuple(l.rstrip("\n").split("\t")[1:]) for l in list(open(IDS))[1:]}
+    old = [json.loads(l) for l in store.get(f"{release}/manifest.jsonl").decode().splitlines()]
+    spans = C.defaultdict(list)
+    for r in recs + [r for r in old if not r["source"]["synthetic"]]:
+        spans[r["source"]["source_file"]].append((r["source"]["start"], r["source"]["end"], r["id"]))
+    overlaps = [(a[2], b[2]) for v in spans.values() for a, b in zip(sorted(v), sorted(v)[1:]) if b[0] < a[1]]
+    bad = {"duplicate ids": len(recs) - len({r["id"] for r in recs}),
+           "ids not in w1/ids.tsv or other span": sum(reg.get(r["id"]) != (r["source"]["source_file"], str(round(r["source"]["start"] * 1000)),
+                                                                            str(round(r["source"]["end"] * 1000))) for r in recs),
+           "held out": sum(map(is_heldout, recs)), "overlapping spans": len(overlaps),
+           "in the release already": len({r["id"] for r in recs} & {r["id"] for r in old}),
+           "incomplete (no en_text / hi_words)": sum(not r.get("hi_words") or any(not s.get("en_text") for s in r["sentences"]) for r in recs)}
+    print(f"{len(recs)} records, {sum(r['duration'] for r in recs) / 3600:.3f} h, {len({r['speaker_id'] for r in recs})} speakers: {bad}"
+          + (f" e.g. {overlaps[:3]}" if overlaps else ""))
+    return not any(bad.values())
+
+
 if __name__ == "__main__":
     cmd, args = sys.argv[1], sys.argv[2:]
     if cmd == "heldout":
@@ -111,5 +133,7 @@ if __name__ == "__main__":
         append_ids(args)
     elif cmd == "stats":
         stats()
+    elif cmd == "check":
+        sys.exit(0 if check() else 1)
     else:
         sys.exit(__doc__)
