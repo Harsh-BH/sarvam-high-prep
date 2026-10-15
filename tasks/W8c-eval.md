@@ -190,6 +190,10 @@ uv run w8c/sm_eval.py --sets stages/w8c_sets/20261014T221953Z-e398964 --ckpt s3:
   - COMET on held-out real speakers (+0.026, CI clear of 0) is the honest headline.
 - **Entities:** number accuracy rises on every set, including FLEURS (+0.09). The training data is number-dense (PS §3A), and the decoder learned to say them.
 - **Text track:** joined with the v1 runner, which split ≈ 0.6% of words at detokenizer pieces (fixed in 06ddbd9). Base and FT share it, so their comparison is fair. Future runs use the fixed runner: rerun the base once (`--name base-v2`, no `--ckpt`) to compare text-track numbers. The speech track doesn't depend on it.
+- **Second checkpoint (dev only):** `w8d/20261015T001450Z-6aaaaed` is the same recipe, early-stopped on full-dev NLL. Run `stages/w8c_eval/20261015T003603Z-ab4c1f2`, current runner.
+  - Dev ASR-COMET 0.753 vs run 1's 0.757 (real 0.747 vs 0.752); ASR-BLEU 31.9; LAAL t0 5.01.
+  - Inside the noise. w8d keeps run 1 (selection on dev speech-track COMET, declared in advance), so test was never used to choose.
+  - base-v2 was cancelled: nobody needs the text-track rerun yet.
 - **Small sets:** dev 124 / test 199 records, 0.75 h / 1.21 h. Differences under ~0.01 COMET aren't resolvable (see the CIs).
 
 ## Spend
@@ -204,7 +208,8 @@ uv run w8c/sm_eval.py --sets stages/w8c_sets/20261014T221953Z-e398964 --ckpt s3:
 | 2026-10-15 | fleurs FT, ml.g5.2xlarge on-demand ($1.82/h) | 4,143 s | $2.09 |
 | 2026-10-15 | dev+test base, ml.g5.xlarge on-demand | 5,697 s | $2.67 |
 | 2026-10-15 | dev+test FT, ml.g5.2xlarge on-demand | 6,125 s | $3.10 |
-| | **Total** (+ < $0.1 S3) | | **≈ $11.8 of $15** |
+| 2026-10-15 | w8d run-2 dev eval, ml.g5.xlarge on-demand | 2,712 s | $1.27 |
+| | **Total** (+ < $0.1 S3) | | **≈ $13.1 of $15** |
 
 - Prices come from the AWS Pricing API (ap-south-1, SageMaker training).
 - Spot was unavailable for the GPU jobs: the account's 10-spot cap was held by scale-real, and g5.xlarge quota is 1 instance.
@@ -229,7 +234,7 @@ uv run w8c/sm_eval.py --sets stages/w8c_sets/20261014T221953Z-e398964 --ckpt s3:
    - On FLEURS (human references) there's no quality gain and BLEU falls 3: part of the in-domain BLEU jump is the W6 style.
 5. **Handoff** to w8d: the command above. The scores were sent to the w8d session.
 
-**Spend:** ≈ $11.8 of the $15 cap (table above). Credits covered all of it: NET $0.00 at the last check.
+**Spend:** ≈ $13.1 of the $15 cap (table above), including w8d's run-2 dev eval. w8d cites the FT evals as being on this ledger. Credits covered all of it: NET $0.00 at the last check.
 
 **Blockers:** none.
 - One fix went to main via the master: w5/align.py crashed on U+090D and now rejects it with rule align_vocab.
