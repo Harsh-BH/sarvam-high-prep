@@ -83,6 +83,8 @@ def main():
         pass
 
     with tempfile.TemporaryDirectory() as d:
+        cut_iv.W1.IDS = Path(d) / "ids.tsv"  # an empty register: the real one grows, and its spans aren't in the fake archive
+        cut_iv.W1.IDS.write_text("id\tsource_file\tstart_ms\tend_ms\n")
         out, puts = Path(d) / "out", []
         (out / "audio").mkdir(parents=True)
         put = lambda m, b, url, et, s3: puts.append(m)
