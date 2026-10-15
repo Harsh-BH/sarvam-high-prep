@@ -217,3 +217,26 @@ With this A10G's compute included (`t`), test LAAL is 5.60 → 5.32.
 5. **Speech (T2U drift):**
    - No measured damage: ASR-based scores track the text-track gains, so the T2U still voices the new decoder states intelligibly.
    - **Not measured:** UTMOS / naturalness. W8c's harness has no audio-quality metric yet.
+
+## 5. What 50 h would change
+
+These are inferences from the runs above, not measurements.
+
+- **This recipe scales cheaply.**
+  - The encoder is frozen and cached: encoding was 275 s for 6.6 h, so ~35 min for 50 h on an A10G.
+  - Decoder steps cost ~0.37 s at batch 8.
+  - 4 epochs of 50 h (~8,300 records) at batch 16 ≈ 2,100 steps ≈ 25 min. A full run is under $3 on ml.g5.2xlarge.
+- **Overfitting moves out.** At 6 h the real-dev optimum was ~4 epochs (500 steps at lr 1e-4). With 8× the data, the same budget is half an epoch per 500 steps. That leaves room for:
+  - higher LoRA rank, or a full-decoder fine-tune at lr ~1e-6 (Hibiki-Zero's < 200 h stage used lr 1e-6);
+  - training longer before dev turns.
+- **Real speech is where the headroom is.**
+  - Synthetic dev gains are large but easy: same engines and script style as train.
+  - Real dev NLL 1.35 → 1.10 and test-real ASR-COMET +0.026 are the honest numbers.
+  - 50 h with a larger real share would show whether the gain grows. If it plateaus, the bottleneck is the frozen encoder on spontaneous, telephone-ish Hindi.
+  - Then the next step is LoRA on the w2v-BERT encoder. That means no caching, the encoder in the loop, ~10× compute: still a few dollars at 50 h.
+- **Style vs meaning.**
+  - More data in one W6 house style deepens the FLEURS style drift (text COMET −0.007 already).
+  - If FLEURS-style general quality matters, mix in 10–20% public parallel speech (FLEURS-train hi→en, CC BY) or lower the rank.
+- **What data does not fix:**
+  - **Latency control.** The EMMA policy has no released training code. Our latency changes are side effects of decoder drift. A latency target needs either p_choose distillation/regularisation (cheap, our code) or reimplementing EMMA's expected-alignment loss (2312.05187 §4; days of work).
+  - **The voice.** T2U and vocoder are not trainable with released code, and the output is Seamless's own 16 kHz unit voice, not Bulbul `shubh`.
