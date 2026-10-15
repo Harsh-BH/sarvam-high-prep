@@ -254,3 +254,23 @@ uv run w8c/sm_eval.py --sets stages/w8c_sets/20261014T221953Z-e398964 --ckpt s3:
 **Local disk:**
 - `data/w8c/` now holds only the jsonl files, splits, logs and `review/` (12 MB).
 - Clip, set and smoke audio were deleted; all of it is in S3.
+
+## Teacher judge (Claude), run v1 — 2026-10-15
+
+`w8c/teacher.py` + Claude Code subagents (9 blind batches, 628 items). Judged against the Hindi source, not the LLM-made references; W6's error codes and quote rule; verdicts computed from validated errors. Judgments: `data/w8c/teacher/v1/judged.jsonl`, also `stages/w8c_teacher/v1/` in S3.
+
+**Calibration:** 40/40 injected errors flagged critical, 35/40 with the exact code (name swaps were coded `meaning` 4×); 1 discarded quote of ~2,000.
+
+| Set | n | any critical | critical errors / 100 Hindi words |
+|---|---|---|---|
+| base (test) | 199 | 89% | 4.03 |
+| fine-tuned run 1 (test) | 199 | 87% | 3.79 |
+| our training targets (W6, sample) | 150 | 37% | 0.78 |
+
+**Base vs fine-tuned (paired bootstrap, critical errors / 100 words, FT − base):**
+- all: −0.22, 95% CI [−0.64, +0.19] (not significant);
+- real speakers: +0.11 [−0.34, +0.58] (no change);
+- synthetic held-out voices: −1.35 [−2.26, −0.47] (significant).
+- Omissions fell 120 → 17 (the base stops early; FT covers the input), but `meaning` errors rose 203 → 267: on real speech the fine-tune says more, not more correctly. This reconciles W8d's ASR-COMET gain (+0.026, rewards coverage) with no gain in error density.
+
+**Our dataset targets:** 37% of sampled records carry ≥ 1 critical error (meaning 30, correction 13, number 10 in 150 records; e.g. "ninth of November" for एक नवंबर, 2,347 for तीन हज़ार सैंतालीस, "studies" for काम करता है). That's about 5× cleaner than model output but not clean: the model learns these errors. Next: measure how many of these W6's own gpt-oss judge missed, and repair or drop flagged training targets.

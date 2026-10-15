@@ -189,16 +189,19 @@ def report(judged, total):
         by[x["system"] if not x["system"].startswith("calib-") else "calibration"].append(x)
         if x["mode"] == "output":
             by[f'{x["system"]} · {x["kind"]}'].append(x)
-    lines = [f"Judged {len(judged)} of {total} items.\n", "| set | n | correct | minor only | critical | top error codes |",
-             "|---|---|---|---|---|---|"]
+    lines = [f"Judged {len(judged)} of {total} items.\n",
+             "| set | n | correct | minor only | any critical | critical errors / 100 Hindi words | top error codes |",
+             "|---|---|---|---|---|---|---|"]
     for name in sorted(by):
         xs = by[name]
         if name == "calibration":
             continue
         v = Counter(x["verdict"] for x in xs)
         codes = Counter(e["code"] for x in xs for e in x["errors"]).most_common(4)
+        crit = sum(e["code"] in W6.JUDGE_CRITICAL for x in xs for e in x["errors"])
+        words = sum(len(x["hi"].split()) for x in xs)
         lines.append(f"| {name} | {len(xs)} | {v['correct'] / len(xs):.0%} | {v['minor'] / len(xs):.0%} | "
-                     f"{v['critical'] / len(xs):.0%} | {', '.join(f'{c} {n}' for c, n in codes)} |")
+                     f"{v['critical'] / len(xs):.0%} | {100 * crit / max(words, 1):.2f} | {', '.join(f'{c} {n}' for c, n in codes)} |")
     cal = by.get("calibration", [])
     if cal:
         clean = [x for x in cal if x["expect"] is None]
@@ -209,7 +212,7 @@ def report(judged, total):
         lines += ["", "**Calibration (is the teacher trustworthy?)**", "",
                   f"- injected errors caught with the right code: {len(caught)}/{len(bad)}"
                   f" ({len(caught) / max(len(bad), 1):.0%}); flagged critical at all: {len(flagged_any)}/{len(bad)}",
-                  f"- clean items flagged critical (false alarms on our own targets): "
+                  f"- unmodified dataset targets flagged critical (real errors in our data, or teacher false alarms; inspect): "
                   f"{sum(x['verdict'] == 'critical' for x in clean)}/{len(clean)}"]
         per = Counter(x["expect"] for x in bad)
         hit = Counter(x["expect"] for x in caught)
@@ -238,7 +241,8 @@ def selftest():
               {**t, "system": "calib-clean", "expect": None, "errors": [], "dropped": 0, "verdict": "correct"},
               {**t, "mode": "output", "system": "ft", "errors": [], "dropped": 0, "verdict": "correct"}]
     rep = report(judged, 3)
-    assert "caught with the right code: 1/1" in rep and "false alarms on our own targets): 0/1" in rep and "| ft · real |" in rep
+    assert "caught with the right code: 1/1" in rep and "inspect): 0/1" in rep and "| ft · real |" in rep
+    assert "| calib" not in rep and "/ 100 Hindi words" in rep
     print("ok: teacher selftest")
 
 
