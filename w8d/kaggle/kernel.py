@@ -104,7 +104,7 @@ def queue(per_gpu, logs):
             try:
                 with open(log, "w") as f:
                     rc = subprocess.run(list(map(str, cmd)), stdout=f, stderr=subprocess.STDOUT, timeout=max(1, left),
-                                        env={**os.environ, "CUDA_VISIBLE_DEVICES": str(k)}).returncode
+                                        env={**os.environ, "CUDA_VISIBLE_DEVICES": str(k), "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True"}).returncode
             except subprocess.TimeoutExpired:
                 rc = "timeout"
             if rc != 0:
@@ -122,7 +122,9 @@ def queue(per_gpu, logs):
 
 def train(cfg):
     ds, urls = dataset()
-    tr = [[r["id"], r["en"]] for r in map(json.loads, open(ds / "train.jsonl"))][:cfg.get("limit")]
+    tr = [[r["id"], r["en"]] for r in map(json.loads, open(ds / "train.jsonl"))]
+    if cfg.get("limit"):  # smoke test: the longest targets, so it also proves batch 8 fits a 16 GB T4
+        tr = sorted(tr, key=lambda p: -len(p[1]))[:cfg["limit"]]
     dv = [[r["id"], " ".join(s["en_text"] for s in r["sentences"])] for r in map(json.loads, open(ds / "dev.jsonl"))][:cfg.get("limit")]
     ids = [i for i, _ in tr + dv]
     fetch(ids, urls, W / "audio")
