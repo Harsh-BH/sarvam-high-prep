@@ -46,10 +46,10 @@ def kaggle(*args, **kw):
 def user():
     if u := os.environ.get("KAGGLE_USERNAME"):
         return u
-    p = Path.home() / ".kaggle/kaggle.json"
-    if not p.exists():
-        raise SystemExit("no Kaggle credentials: kaggle.com -> Settings -> API -> Create New Token -> ~/.kaggle/kaggle.json")
-    return json.loads(p.read_text())["username"]
+    out = subprocess.run(["kaggle", "config", "view"], capture_output=True, text=True).stdout  # kaggle.json or access_token
+    if not (u := next((l.split(":", 1)[1].strip() for l in out.splitlines() if l.startswith("- username:")), "")) or u == "None":
+        raise SystemExit("no Kaggle credentials: kaggle.com -> Settings -> API -> Create New Token")
+    return u
 
 
 def select(runs):
