@@ -26,7 +26,8 @@ PKGS = ["fairseq2n==0.2.1+cu121", "fairseq2==0.2.1", "simuleval==1.1.4", "soundf
         "setuptools<70"]  # torchmetrics imports pkg_resources; a uv venv has no setuptools
 INDEXES = ["https://download.pytorch.org/whl/cu121", "https://fair.pkg.atmeta.com/fairseq2/whl/pt2.2.0/cu121"]
 CARDS = {"seamless_streaming_unity": ("checkpoint", "tokenizer", "char_tokenizer"),
-         "seamless_streaming_monotonic_decoder": ("checkpoint",), "vocoder_v2": ("checkpoint",)}
+         "seamless_streaming_monotonic_decoder": ("checkpoint",), "vocoder_v2": ("checkpoint",),
+         "seamlessM4T_v2_large": ("char_tokenizer",)}  # the streaming T2U builder loads its char tokenizer from this card
 BUDGET_S = 11 * 3600  # Kaggle stops a session at 12 h; stop early so /kaggle/working is saved and the next one resumes
 T0 = time.time()
 
