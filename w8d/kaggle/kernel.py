@@ -22,7 +22,8 @@ VPY = W / "venv/bin/python"
 SEAMLESS = "https://github.com/facebookresearch/seamless_communication/archive/9a081e935c29c6b1e0e05bcbf3fcb623ad306524.tar.gz"
 TORCH = ["torch==2.2.0+cu121", "torchaudio==2.2.0+cu121"]
 PKGS = ["fairseq2n==0.2.1+cu121", "fairseq2==0.2.1", "simuleval==1.1.4", "soundfile", "numpy<2",  # = w8c/sm_eval.py's
-        "sacrebleu==2.4.3", "unbabel-comet==2.2.4", "transformers==4.46.3"]                    # FAIRSEQ2 + SCORING
+        "sacrebleu==2.4.3", "unbabel-comet==2.2.4", "transformers==4.46.3",                    # FAIRSEQ2 + SCORING
+        "setuptools<70"]  # torchmetrics imports pkg_resources; a uv venv has no setuptools
 INDEXES = ["https://download.pytorch.org/whl/cu121", "https://fair.pkg.atmeta.com/fairseq2/whl/pt2.2.0/cu121"]
 CARDS = {"seamless_streaming_unity": ("checkpoint", "tokenizer", "char_tokenizer"),
          "seamless_streaming_monotonic_decoder": ("checkpoint",), "vocoder_v2": ("checkpoint",)}
