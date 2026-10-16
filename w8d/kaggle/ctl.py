@@ -109,11 +109,12 @@ def data(_):
 def arms(n_train, limit):
     """Two LoRA arms of W8d run 1's recipe (train.py defaults), one per T4. A: a 4-epoch horizon that early-stops
     where dev NLL turns (W8d run 2's role); B: run 1's shape, linear decay to 0 at 2 epochs (the expected optimum)."""
+    acc = ["--accum", "2"]  # batch 8 of 60 s records does not fit a 16 GB T4 in one pass (smoke v1: OOM); same gradient
     if limit:
-        return {"A": ["--steps", "20", "--eval_every", "10"], "B": ["--steps", "10", "--eval_every", "10"]}
+        return {"A": ["--steps", "20", "--eval_every", "10", *acc], "B": ["--steps", "10", "--eval_every", "10", *acc]}
     ep = -(-n_train // BATCH)
-    return {"A": ["--steps", str(4 * ep), "--eval_every", "100", "--patience", "5"],
-            "B": ["--steps", str(2 * ep), "--eval_every", "100", "--patience", "5"]}
+    return {"A": ["--steps", str(4 * ep), "--eval_every", "100", "--patience", "5", *acc],
+            "B": ["--steps", str(2 * ep), "--eval_every", "100", "--patience", "5", *acc]}
 
 
 def boot(cfg, tar):

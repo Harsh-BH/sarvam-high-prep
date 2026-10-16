@@ -26,6 +26,7 @@ def args_parser():
     ap.add_argument("--run", required=True)
     ap.add_argument("--steps", type=int, default=800)
     ap.add_argument("--batch", type=int, default=8)
+    ap.add_argument("--accum", type=int, default=1, help="split each batch into this many micro-batches (same gradient, less memory)")
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--warmup", type=int, default=50)
     ap.add_argument("--rank", type=int, default=16)
@@ -110,10 +111,14 @@ def train(model, train_items, dev_items, a, ckpt, ctx):
         if len(order) < a.batch:
             order += random.sample(range(len(train_items)), len(train_items))  # next epoch, reshuffled
         idx, order = order[:a.batch], order[a.batch:]
-        b = batch([train_items[i] for i in idx], ctx["tok_enc"], ctx["eos"], ctx["pad"], ctx["device"])
-        with ctx["amp"]():
-            l, k, _ = loss_sum(model, b, ctx["vocab_info"], a.label_smoothing)
-        scaler.scale(l / k).backward()
+        m = -(-a.batch // a.accum)  # micro-batches: the gradient of sum(NLL) / all tokens, as one batch of a.batch
+        bs = [batch([train_items[i] for i in idx[j:j + m]], ctx["tok_enc"], ctx["eos"], ctx["pad"], ctx["device"]) for j in range(0, len(idx), m)]
+        k, l = sum(b["ntok"] for b in bs), 0.0
+        for b in bs:
+            with ctx["amp"]():
+                lb, _, _ = loss_sum(model, b, ctx["vocab_info"], a.label_smoothing)
+            scaler.scale(lb / k).backward()
+            l += float(lb)
         scaler.unscale_(opt)
         gn = torch.nn.utils.clip_grad_norm_(params, 1.0)
         scaler.step(opt), scaler.update(), opt.zero_grad(set_to_none=True), sched.step()
