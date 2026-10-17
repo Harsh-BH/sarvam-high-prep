@@ -50,7 +50,16 @@ def main():
         assert len(per) == len(s["dev_per_record"]) == len(items)
         assert abs(loss3 - s["dev_loss_merged"]) < 2e-2, (loss3, s)  # fp16-saved weights reproduce the trained model
         assert not any(".lora_" in k for k in torch.load(ck / "decoder.pt")["model"])
-        print("ok", json.dumps(s))
+    lora = []  # --accum: one step of batch 4 as 2 micro-batches == one batch of 4 (dropout off)
+    for acc in ("1", "2"):
+        b = T.args_parser().parse_args(["--run", "t", "--steps", "1", "--batch", "4", "--accum", acc, "--lr", "3e-2", "--warmup", "1",
+                                        "--rank", "4", "--alpha", "8", "--lora_dropout", "0", "--eval_every", "1"])
+        with tempfile.TemporaryDirectory() as d:
+            random.seed(0)
+            T.train(model(), items, items, b, Path(d), ctx)
+            lora.append(torch.load(Path(d) / "last.pt")["lora"])
+    assert all(torch.allclose(lora[0][k], lora[1][k], atol=1e-6) for k in lora[0]) and any(v.abs().sum() > 0 for k, v in lora[0].items() if "lora_B" in k)
+    print("ok", json.dumps(s))
 
 
 if __name__ == "__main__":
