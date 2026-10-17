@@ -214,7 +214,9 @@ def table(cols, sc, kind):
 
 
 def report(a):
-    """3-way speech-track table (dev + test) and paired bootstraps; then the T4-vs-A10G drift of the base on dev."""
+    """3-way speech-track table (dev + test) and paired bootstraps; then the T4-vs-A10G drift of the base on dev.
+    A T4 streams at ~real time, so long sessions miss the 30 s deadline there and score as failed (W8d §6): the
+    bootstraps and t0 latencies are repeated on the sessions that finished in every system."""
     win = json.loads(store.get(f"stages/w8c_eval/{a.run}-base/run.json"))["selection"]["winner"]
     runs = {"base": BASE, "FT-6h": FT6, "FT-47h": f"stages/w8c_eval/{a.run}-ft47h-{win}", "base T4": f"stages/w8c_eval/{a.run}-base"}
     sets = {n: ("dev",) if n == "base T4" else ("dev", "test") for n in runs}
@@ -226,10 +228,18 @@ def report(a):
         print("\n".join(["", *table(cols, sc, kind)]))
     print()
     pairs = [(s, kind, x, "FT-47h") for s in ("dev", "test") for kind in ("real", "synthetic") for x in ("base", "FT-6h")]
-    for s, kind, x, y in pairs + [("dev", k, "base", "base T4") for k in ("real", "synthetic")]:
-        ids = sorted(i for i, p in per["base", s].items() if p["kind"] == kind)
-        m, lo, hi = bootstrap([per[x, s][i]["asr_comet"] for i in ids], [per[y, s][i]["asr_comet"] for i in ids])
-        print(f"{s} {kind} ({len(ids)}): ASR-COMET {y} - {x} = {m:+.3f} [{lo:+.3f}, {hi:+.3f}]")
+    done = {s: {i for i in per["base", s] if not any(per[n, s][i]["failed"] for n in runs if s in sets[n])} for s in ("dev", "test")}
+    for view, keep in (("all sessions", lambda s, i: True), ("sessions finished in every system", lambda s, i: i in done[s])):
+        print(f"paired ASR-COMET, {view}:")
+        for s, kind, x, y in pairs + [("dev", k, "base", "base T4") for k in ("real", "synthetic")]:
+            ids = sorted(i for i, p in per["base", s].items() if p["kind"] == kind and keep(s, i))
+            m, lo, hi = bootstrap([per[x, s][i]["asr_comet"] for i in ids], [per[y, s][i]["asr_comet"] for i in ids])
+            print(f"{s} {kind} ({len(ids)}): ASR-COMET {y} - {x} = {m:+.3f} [{lo:+.3f}, {hi:+.3f}]")
+        print()
+    print("latency t0 (s) on sessions finished in every system: LAAL / StartOffset / EndOffset")
+    for (n, s), d in per.items():
+        f = lambda k: sum(d[i]["lat_t0"][k] for i in done[s]) / len(done[s])  # noqa: E731
+        print(f"{s} {n} ({len(done[s])}): {f('laal'):.2f} / {f('start_offset'):.2f} / {f('end_offset'):.2f}")
     print("\n".join(["", *table([("dev base (A10G)", ("base", "dev")), ("dev base (T4)", ("base T4", "dev"))], sc, "all")]))
 
 

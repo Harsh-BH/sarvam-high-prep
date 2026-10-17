@@ -241,7 +241,68 @@ These are inferences from the runs above, not measurements.
   - **Latency control.** The EMMA policy has no released training code. Our latency changes are side effects of decoder drift. A latency target needs either p_choose distillation/regularisation (cheap, our code) or reimplementing EMMA's expected-alignment loss (2312.05187 §4; days of work).
   - **The voice.** T2U and vocoder are not trainable with released code, and the output is Seamless's own 16 kHz unit voice, not Bulbul `shubh`.
 
+## 6. Kaggle run: run 1's recipe on 46 h
+
+AWS credits ran out on 2026-10-14, so this ran on Kaggle's free T4s (2 per session, 12 h cap).
+- **Code:**
+  - `w8d/kaggle/ctl.py` runs on the laptop: data, push, status, pull, upload, report.
+  - `w8d/kaggle/kernel.py` runs inside the kernel.
+  - Audio reaches Kaggle as 7-day presigned S3 URLs inside a private dataset. AWS keys never enter a kernel, and the kernels are private.
+
+**Data:**
+- **Train:** every pilot-v3 record that `is_heldout()` passes, minus the 9 burned ids. That is 7,901 records, 46.39 h, of which 1,946 records (13.31 h) are synthetic. FT-6h trained on 6.6 h.
+- **Dev/test:** W8c's frozen sets, `stages/w8c_sets/20261014T221953Z-e398964`.
+
+**Train** (`20261016T212711Z-243a636`, 1.72 h on 2×T4):
+- Same recipe as run 1: LoRA r16 on the monotonic decoder, lr 1e-4, batch 8.
+- The batch runs as `--accum 4` micro-batches. The gradient is the same; it's needed because a batch of 8 records of 60 s runs out of memory on a 16 GB T4.
+- Two arms, both with patience 5 × 100 steps:
+
+  | Arm | Length | Dev NLL (base 1.222) | Stopped early? |
+  |---|---|---|---|
+  | A | 4 epochs, 3,952 steps | 0.875 | No; still falling 0.0007 over its last 500 steps |
+  | B | 2 epochs, 1,976 steps | 0.897 | No |
+
+- **Selection:** the metric was declared in advance: dev ASR-COMET, speech track, both arms measured on T4. A scored 0.753 and B 0.744, so **A is FT-47h**.
+
+**Eval** (`20261017T064502Z-1c92b1c`, 2.46 h): A on dev and test, B on dev, and the base on dev as a T4 control.
+
+**T4 caveat:**
+- On a T4 the agent streams at about 1.05× real time (compute_s / src_s over finished sessions).
+- Every session with ≥ 43 s of source ends more than 30 s behind, so it scores as failed: empty hypothesis and worst-case latency (§5.1 R3). That is 4 of 124 dev sessions and 14 of 199 test sessions. The same 4 dev ids fail for the base model on T4.
+- So the raw `ctl.py report` tables mix hardware with model. For example, test ASR-COMET is 0.726 for FT-47h vs 0.749 for FT-6h, and that gap is the T4.
+- On sessions that finished in every system, the base model gives the same results on T4 as on A10G: ASR-COMET −0.000 [−0.002, +0.002] real and +0.003 synthetic, with identical t0 latency. **The T4 changes speed, not output.**
+- The comparison below uses those sessions: 120 dev, 185 test.
+- It leaves out the longest records, but it leaves out the same ones for every system. Compute-aware latency (`lat_t`) from a T4 is not comparable to A10G numbers.
+
+ASR-COMET on sessions that finished in every system, paired bootstrap 95% CI:
+
+| Set | Kind (n) | Base | FT-6h | FT-47h | FT-47h − base | FT-47h − FT-6h |
+|---|---|---|---|---|---|---|
+| dev | real (87) | 0.740 | 0.751 | 0.762 | +0.022 [+0.008, +0.036] | +0.011 [−0.001, +0.027] |
+| dev | synthetic (33) | 0.682 | 0.772 | 0.782 | +0.100 [+0.073, +0.130] | +0.010 [−0.003, +0.026] |
+| test | real (140) | 0.717 | 0.744 | 0.749 | **+0.032 [+0.020, +0.043]** | +0.004 [−0.002, +0.011] |
+| test | synthetic (45) | 0.691 | 0.773 | 0.783 | +0.092 [+0.072, +0.112] | +0.010 [+0.000, +0.019] |
+
+- **Test latency t0** on the same sessions (LAAL / StartOffset / EndOffset, in seconds): base 4.91 / 3.90 / 2.31, FT-6h 4.64 / 3.51 / 3.74, FT-47h 4.77 / 3.36 / 3.90.
+- **Read:**
+  - The gain over the base holds: +0.032 on real test.
+  - But 7× the data under the same recipe adds almost nothing over FT-6h: +0.004 on real test with a CI that spans 0, and +0.010 on synthetic.
+  - Inference, not measured: decoder-only LoRA has plateaued, as §5 predicted for a frozen encoder. Next would be encoder LoRA, or a higher rank and a longer schedule; arm A was still improving when it stopped.
+- **Artifacts:**
+  - LoRA weights: `w8d/kaggle/20261016T212711Z-243a636/{A,B}/best_lora.pt`.
+  - The merged `decoder.pt` exists only in the output of Kaggle kernel `sarvam-w8d-train`, and the next train push overwrites it.
+  - Evals: `stages/w8c_eval/20261017T064502Z-1c92b1c-{base,ft47h-A,ft47h-B}`.
+- **Spend:**
+  - Kaggle GPU: $0.
+  - AWS: S3 downloads of about 8 GB, inside the free 100 GB per month, plus PUTs of about $0.01.
+
 ## Status — 2026-10-15
+
+**Update 2026-10-17:**
+- FT-47h trained and evaluated on Kaggle (§6).
+- Real test is +0.032 over the base, but only +0.004 (CI spans 0) over FT-6h.
+- AWS credits are exhausted: AWS is now paid, and GPU work runs on Kaggle.
 
 **Done:**
 - Recipe researched in the code (§1).
